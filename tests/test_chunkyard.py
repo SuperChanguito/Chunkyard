@@ -149,10 +149,13 @@ def test_table_rows_and_lone_caps_are_not_headings():
 
 
 def test_numbered_heading_ignores_unnumbered_parent():
-    text = ("6 ADVERSE REACTIONS\n\n6.1 Trials\n\nText.\n\nSome Inferred Label\n\nText.\n\n"
+    # A multi-word ALL CAPS table title is a top-level heading, so without the
+    # numbered-parent rule "6.2" would end up filed under it.
+    text = ("6 ADVERSE REACTIONS\n\n6.1 Trials\n\nText.\n\nSTUDY RESULTS TABLE\n\nText.\n\n"
             "6.2 Immunogenicity\n\nBody.\n")
     last = split_sections(text)[-1]
-    assert last.path == ["6 ADVERSE REACTIONS", "6.2 Immunogenicity"]
+    assert last.path[-1] == "6.2 Immunogenicity"
+    assert "STUDY RESULTS TABLE" not in last.path
 
 
 def test_dashed_headings():
@@ -167,3 +170,48 @@ def test_strip_running_lines():
     out = strip_running_lines(pages)
     assert all("Reference ID" not in p and "Page" not in p for p in out)
     assert all("Body text" in p for p in out)
+
+
+# --- end to end on a fictional drug label, as extracted from a PDF ----------
+# Pages are separated by form feeds. The text mimics the FDA label that first
+# exposed these problems: running footers, dashed headings, numbered sections
+# right after body text, a results table, and a lone ALL CAPS column label.
+
+LABEL = Path(__file__).resolve().parent / "fixtures" / "fictional-label-pages.txt"
+
+
+@pytest.fixture(scope="module")
+def label_text():
+    from chunkyard.loaders import normalize, pages_to_text
+    pages = LABEL.read_text(encoding="utf-8").split("\f\n")
+    assert len(pages) == 5
+    return normalize(pages_to_text(pages))
+
+
+def test_label_footers_removed(label_text):
+    assert "Reference ID" not in label_text
+    assert not re.search(r"Page \d of 5", label_text)
+
+
+def test_label_section_tree(label_text):
+    paths = [s.path for s in split_sections(label_text)]
+    for expected in (
+        ["HIGHLIGHTS OF PRESCRIBING INFORMATION", "INDICATIONS AND USAGE"],
+        ["2 DOSAGE AND ADMINISTRATION", "2.1 Recommended Dosage"],
+        ["2 DOSAGE AND ADMINISTRATION", "2.2 Missed Doses"],
+        ["2 DOSAGE AND ADMINISTRATION", "2.3 Storage Instructions"],  # after a page break
+        ["6 ADVERSE REACTIONS", "6.2 Immunogenicity"],                # after the table
+        ["8 USE IN SPECIFIC POPULATIONS", "8.2 Lactation"],
+        ["17 PATIENT COUNSELING INFORMATION"],
+    ):
+        assert any(p[:len(expected)] == expected for p in paths), expected
+    titles = [t for p in paths for t in p]
+    assert not any(re.search(r"\d\.\d", t) and not re.match(r"\d+\.\d+ ", t) for t in titles), titles
+    assert "PLACEBO" not in [p[0] for p in paths]
+    assert max(len(p) for p in paths) <= 4
+
+
+def test_label_answer_chunk_carries_its_heading(label_text):
+    chunk = next(c for c in chunk_sections(label_text) if "Within 7 days" in c.text)
+    assert chunk.headers == ["2 DOSAGE AND ADMINISTRATION", "2.2 Missed Doses"]
+    assert chunk.text.startswith("2 DOSAGE AND ADMINISTRATION > 2.2 Missed Doses\n\n")

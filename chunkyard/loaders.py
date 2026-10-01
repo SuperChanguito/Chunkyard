@@ -43,7 +43,12 @@ def _pdf_text(data: bytes) -> str:
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(data))
-    pages = strip_running_lines([(page.extract_text() or "") for page in reader.pages])
+    return pages_to_text([(page.extract_text() or "") for page in reader.pages])
+
+
+def pages_to_text(pages: list[str]) -> str:
+    """Clean up per-page text extracted from a PDF into one document."""
+    pages = strip_running_lines(pages)
     text = "\n\n".join(p.strip() for p in pages if p.strip())
     text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)  # re-join hyphenated line breaks
     return infer_paragraphs(text)
