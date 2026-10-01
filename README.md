@@ -86,4 +86,7 @@ To use a different model, set `CHUNKYARD_MODEL` (for example
 - `chunkyard/static/index.html`: the single-page front end
 
 Tests: `uv run pytest` (they use a fake embedder, so they're fast and don't
-need the model).
+need the model). GitHub Actions runs them on every push.
+`tests/fixtures/fictional-label-pages.txt` is an invented drug label laid out
+like text extracted from a PDF (running footers, dashed and numbered headings,
+a results table) and guards the heading detection against regressions.

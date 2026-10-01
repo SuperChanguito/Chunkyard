@@ -1,0 +1,20 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.12"
+      # The tests use a fake embedder, so they only need numpy and pytest.
+      # Skipping the full project install avoids downloading PyTorch (~1 GB).
+      - name: Run tests
+        run: uv run --no-project --with pytest --with numpy pytest -v
