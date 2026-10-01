@@ -56,7 +56,7 @@ def pages_to_text(pages: list[str]) -> str:
 
 def strip_running_lines(pages: list[str], edge: int = 3) -> list[str]:
     """Remove running headers/footers: lines near the top or bottom of a page
-    that repeat on most pages ("Reference ID: 12345", "Page 4", a title).
+    that repeat on many pages ("Reference ID: 12345", "Page 4", a title).
     Left in, they turn into fake headings and noise in every chunk."""
     if len(pages) < 3:
         return pages
@@ -73,7 +73,9 @@ def strip_running_lines(pages: list[str], edge: int = 3) -> list[str]:
         nonblank = [ln for ln in lines if ln.strip()]
         for k in {key(ln) for ln in nonblank[:edge] + nonblank[-edge:]}:
             counts[k] = counts.get(k, 0) + 1
-    threshold = max(3, len(pages) // 2)
+    # A quarter, not half: one PDF often bundles several separately numbered
+    # documents (an FDA label plus its patient leaflet, for example).
+    threshold = max(3, len(pages) // 4)
     running = {k for k, n in counts.items() if n >= threshold and k}
 
     out = []

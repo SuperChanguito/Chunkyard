@@ -215,3 +215,34 @@ def test_label_answer_chunk_carries_its_heading(label_text):
     chunk = next(c for c in chunk_sections(label_text) if "Within 7 days" in c.text)
     assert chunk.headers == ["2 DOSAGE AND ADMINISTRATION", "2.2 Missed Doses"]
     assert chunk.text.startswith("2 DOSAGE AND ADMINISTRATION > 2.2 Missed Doses\n\n")
+
+
+def test_strip_page_numbers_in_bundled_documents():
+    # 12 pages: a 4-page label numbered "N of 4" plus 8 pages of something else.
+    from chunkyard.loaders import strip_running_lines
+    pages = [f"Label text unique to page {i}, long enough to be real content here.\n{i} of 4"
+             for i in range(1, 5)]
+    pages += [f"Leaflet text unique to page {i}, long enough to be real content too." for i in range(8)]
+    out = strip_running_lines(pages)
+    assert not any(" of 4" in p for p in out)
+    assert all("unique to page" in p for p in out)
+
+
+def test_results_report_their_sections(sample_text):
+    store = Store(FakeEmbedder())
+    doc = store.add("s", sample_text, 500, 100, 1200)
+    res = query(store, doc.id, "coverage two years receipt", k=5)
+    top = res["results"]["section"][0]
+    assert top["section"][-2:] == ["Warranty", "What's covered"]
+    assert top["section_end"] == top["section"]
+    # Fixed chunks can straddle a section boundary; both ends are reported.
+    assert any(r["section"] != r["section_end"] for r in res["results"]["fixed"])
+
+
+def test_sample_registry_files_and_questions():
+    from chunkyard.samples import SAMPLES, SAMPLES_DIR
+    assert (SAMPLES_DIR / SAMPLES["tent"]["file"]).is_file()
+    for spec in SAMPLES.values():
+        assert len(spec["questions"]) >= 3
+    fda = " ".join(SAMPLES["fda"]["questions"]).lower()
+    assert "dose" in fda and "used to treat" in fda

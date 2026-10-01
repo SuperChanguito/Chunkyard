@@ -63,6 +63,12 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: 
 .drop strong { color: var(--text); display: block; }
 .drop input { display: none; }
 .or { text-align: center; color: var(--faint); font-size: 13px; margin: 8px 0; }
+.samples { display: grid; gap: 8px; }
+.sample-btn { text-align: left; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; cursor: pointer; }
+.sample-btn:hover:not(:disabled) { border-color: var(--text); }
+.sample-btn:disabled { opacity: .5; cursor: not-allowed; }
+.sample-btn strong { display: block; font-weight: 600; }
+.sample-btn span { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
 button { font: inherit; }
 .btn { background: var(--accent); color: var(--accent-text); border: 0; border-radius: 8px; padding: 8px 14px; cursor: pointer; font-weight: 500; }
 .btn.secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
@@ -73,6 +79,11 @@ button { font: inherit; }
 .settings label.full { grid-column: 1 / -1; }
 .settings input { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); width: 100%; }
 .hint { font-size: 12px; color: var(--faint); margin: 8px 0 0; }
+.note { font-size: 13px; color: var(--muted); margin: -4px 0 12px; max-width: 72ch; }
+.how { flex-basis: 100%; font-size: 14px; color: var(--muted); }
+.how summary { cursor: pointer; color: var(--text); font-weight: 500; width: fit-content; }
+.how p { margin: 8px 0 0; max-width: 72ch; line-height: 1.6; }
+.stat .explain { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.45; }
 
 .docname { font-weight: 600; word-break: break-all; }
 .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
@@ -92,9 +103,15 @@ button { font: inherit; }
 .chip { font-size: 13px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: 99px; padding: 3px 10px; cursor: pointer; }
 .chip:hover { border-color: var(--text); }
 
-.summary { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 16px 0 10px; }
-.headline { font-weight: 600; }
-.headline.agree { color: var(--good); } .headline.disagree { color: var(--bad); }
+.summary { margin: 16px 0 10px; }
+.verdict { margin-bottom: 10px; }
+.verdict.disagree { background: var(--warn-soft); border: 1px solid var(--warn); border-left-width: 6px; border-radius: 10px; padding: 14px 16px; }
+.verdict .vhead { font-weight: 700; }
+.verdict.disagree .vhead { font-size: 22px; line-height: 1.25; color: var(--warn); }
+.verdict.disagree .vline { margin-top: 6px; font-size: 15px; color: var(--text); }
+.verdict.agree .vhead { font-size: 14px; color: var(--muted); }
+.verdict.agree .vline { font-size: 13px; color: var(--muted); }
+.pairs { display: flex; flex-wrap: wrap; gap: 4px 16px; }
 .pair { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .pair b { font-weight: 600; color: var(--text); }
 
@@ -168,6 +185,10 @@ details.docview summary { cursor: pointer; font-weight: 600; }
     <p>Same document, same question, three ways to chunk it. See what each one retrieves.</p>
     <span class="pill" id="status">Loading model…</span>
     <button class="theme-btn" id="themeBtn" title="Toggle light/dark">◐</button>
+    <details class="how">
+      <summary>How this works</summary>
+      <p>A retrieval system can't read a whole document every time someone asks a question. It cuts the document into passages first, then fetches only the few most likely to hold the answer and shows those to the model. How you cut the document quietly decides what the system is capable of answering. Chunkyard cuts the same document three ways so you can watch that happen.</p>
+    </details>
   </header>
 
   <div class="grid-top">
@@ -178,8 +199,9 @@ details.docview summary { cursor: pointer; font-weight: 600; }
         <strong>Drop a .txt, .md, or .pdf</strong>
         or click to choose a file
       </label>
-      <div class="or">or</div>
-      <button class="btn secondary block" id="sampleBtn">Use the sample tent manual</button>
+      <p class="hint">Everything runs on this machine. The document is never uploaded anywhere.</p>
+      <div class="or">or try a built-in sample</div>
+      <div class="samples" id="samples"></div>
       <div class="settings">
         <label>Fixed chunk size (chars)<input type="number" id="size" value="500" min="50" max="5000" step="50"></label>
         <label>Fixed overlap (chars)<input type="number" id="overlap" value="100" min="0" max="4999" step="25"></label>
@@ -191,6 +213,7 @@ details.docview summary { cursor: pointer; font-weight: 600; }
 
     <section class="card" id="docCard">
       <h2>2 · Chunks</h2>
+      <p class="note">The same document, cut three different ways. More chunks is not better. What matters is whether a chunk still makes sense on its own.</p>
       <div id="docInfo" class="empty">No document yet. Upload a file or try the sample.</div>
     </section>
   </div>
@@ -201,6 +224,7 @@ details.docview summary { cursor: pointer; font-weight: 600; }
       <input id="question" placeholder="Ask a question about the document…" autocomplete="off" disabled>
       <button class="btn" id="askBtn" disabled>Retrieve</button>
     </form>
+    <p class="hint">Your question gets converted into a list of numbers that represents its meaning. Every chunk was converted the same way. Finding relevant passages means finding the chunks whose numbers sit closest to your question's. That closeness is the score below.</p>
     <div class="examples hidden" id="examples"></div>
     <div class="error hidden" id="askErr"></div>
 
@@ -227,18 +251,13 @@ details.docview summary { cursor: pointer; font-weight: 600; }
 const S = ["fixed", "paragraph", "section"];
 const NAMES = { fixed: "Fixed", paragraph: "Paragraph", section: "Section" };
 const DESC = {
-  fixed: "every N chars, with overlap",
-  paragraph: "split on blank lines",
-  section: "headers kept with content",
+  fixed: "Cuts every N characters and ignores meaning entirely. Fast and predictable. Will slice a table or a sentence in half without noticing.",
+  paragraph: "Cuts where the author cut. Respects the writing, but paragraph lengths vary wildly and a heading becomes its own tiny chunk.",
+  section: "Cuts at headings and keeps each heading attached to the text beneath it. Every passage knows what part of the document it came from. More work to build, and it needs a document that actually has structure.",
 };
+const SCORE_TIP = "How closely this passage matches the meaning of your question. It measures similarity, not truth. A passage can score highly and still be the wrong answer.";
 const BADGE = { fixed: "fx", paragraph: "pg", section: "sc" };
-const SAMPLE_QS = [
-  "How long is the warranty?",
-  "What isn't covered?",
-  "How should I store the tent over the winter?",
-  "Why is the inside of my tent wet in the morning?",
-  "How much does it weigh?",
-];
+let SAMPLES = [];  // built-in samples from the server, each with suggested questions
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -249,7 +268,7 @@ const overlap = (a, b) => {
 };
 
 let doc = null;          // current document summary from the server
-let lastSource = null;   // {kind: "file", file} | {kind: "sample"}
+let lastSource = null;   // {kind: "file", file} | {kind: "sample", id}
 let modelReady = false;
 
 // ---------- theme ----------
@@ -277,12 +296,24 @@ async function pollStatus() {
 }
 pollStatus();
 
-// Shortcut: /?sample=1&q=How+long+is+the+warranty%3F loads the sample and asks.
-(() => {
+// ---------- built-in samples ----------
+async function loadSamples() {
+  try { SAMPLES = await fetch("/api/samples").then((r) => r.json()); } catch { SAMPLES = []; }
+  $("samples").innerHTML = SAMPLES.map((s) => `
+    <button type="button" class="sample-btn" data-id="${s.id}" ${s.available ? "" : "disabled"}>
+      <strong>${esc(s.title)}</strong>
+      <span>${s.available ? esc(s.blurb) : "Not found in the samples folder."}</span>
+    </button>`).join("");
+  $("samples").querySelectorAll(".sample-btn").forEach((b) => (b.onclick = () => index({ kind: "sample", id: b.dataset.id })));
+}
+
+// Shortcut: /?sample=fda&q=... loads a built-in sample and asks (sample=1 means the tent manual).
+loadSamples().then(() => {
   const p = new URLSearchParams(location.search);
   if (p.get("q")) $("question").value = p.get("q");
-  if (p.get("sample")) index({ kind: "sample" });
-})();
+  const id = p.get("sample");
+  if (id) index({ kind: "sample", id: id === "1" ? "tent" : id });
+});
 
 // ---------- upload ----------
 function settingsForm() {
@@ -297,6 +328,7 @@ async function index(source) {
   const fd = settingsForm();
   let url = "/api/sample";
   if (source.kind === "file") { fd.append("file", source.file); url = "/api/documents"; }
+  else fd.append("sample", source.id);
   $("uploadErr").classList.add("hidden");
   $("docInfo").className = "busy";
   $("docInfo").textContent = modelReady ? "Chunking and embedding…" : "Chunking and embedding (waiting for the model to finish loading first)…";
@@ -309,7 +341,7 @@ async function index(source) {
     renderDoc();
     $("results").classList.add("hidden");
     $("question").disabled = false; $("askBtn").disabled = false; $("rechunkBtn").disabled = false;
-    renderExamples(source.kind === "sample");
+    renderExamples(source);
     if ($("question").value.trim()) ask();
     else $("question").focus();
   } catch (e) {
@@ -322,12 +354,14 @@ async function index(source) {
 }
 
 function setBusy(b) {
-  ["sampleBtn", "rechunkBtn", "askBtn"].forEach((id) => { if (b) $(id).disabled = true; });
-  if (!b) { $("sampleBtn").disabled = false; $("rechunkBtn").disabled = !doc; $("askBtn").disabled = !doc; }
+  ["rechunkBtn", "askBtn"].forEach((id) => { if (b) $(id).disabled = true; });
+  document.querySelectorAll(".sample-btn").forEach((el) => {
+    el.disabled = b || !SAMPLES.find((s) => s.id === el.dataset.id)?.available;
+  });
+  if (!b) { $("rechunkBtn").disabled = !doc; $("askBtn").disabled = !doc; }
 }
 
 $("file").onchange = (e) => { const f = e.target.files[0]; if (f) index({ kind: "file", file: f }); e.target.value = ""; };
-$("sampleBtn").onclick = () => index({ kind: "sample" });
 $("rechunkBtn").onclick = () => lastSource && index(lastSource);
 const drop = $("drop");
 ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
@@ -348,16 +382,18 @@ function renderDoc() {
       <div class="sub">avg ${st.avg_chars} chars · ${st.min_chars}–${st.max_chars}</div>
       ${st.truncated ? `<div class="warn">${st.truncated} chunk${st.truncated > 1 ? "s" : ""} too long for the model (end ignored)</div>` : ""}
       <div class="strip" title="Where each chunk starts in the document">${ticks}</div>
+      <div class="explain">${DESC[k]}</div>
     </div>`;
   }
   $("docInfo").className = "";
   $("docInfo").innerHTML = h + "</div>";
 }
 
-function renderExamples(isSample) {
+function renderExamples(source) {
   const box = $("examples");
-  if (!isSample) { box.classList.add("hidden"); return; }
-  box.innerHTML = SAMPLE_QS.map((q) => `<button type="button" class="chip">${esc(q)}</button>`).join("");
+  const sample = source.kind === "sample" && SAMPLES.find((s) => s.id === source.id);
+  if (!sample) { box.classList.add("hidden"); return; }
+  box.innerHTML = sample.questions.map((q) => `<button type="button" class="chip">${esc(q)}</button>`).join("");
   box.querySelectorAll(".chip").forEach((b) => (b.onclick = () => { $("question").value = b.textContent; ask(); }));
   box.classList.remove("hidden");
 }
@@ -388,14 +424,15 @@ async function ask() {
 function renderResults() {
   $("results").classList.remove("hidden");
 
-  // Summary
+  // Summary: the verdict on the #1 passages, then the quieter details.
   const pairs = res.pairs.map((p) =>
     `<span class="pair">${NAMES[p.a]} ↔ ${NAMES[p.b]}: #1 ${p.top1_agree ? "<b>same</b>" : "<b>different</b>"} · ${Math.round(p.overlap * 100)}% text overlap</span>`).join("");
   const uniqueCount = S.reduce((n, k) => n + res.results[k].filter((r) => r.unique).length, 0);
-  $("summary").innerHTML = `<span class="headline ${res.top1_all_agree ? "agree" : "disagree"}">
-      ${res.top1_all_agree ? "All three agree on the best passage" : "The strategies disagree on the best passage"}</span>
-    ${pairs}
-    <span class="pair"><b>${uniqueCount}</b> of ${S.length * 5} results found by only one strategy</span>`;
+  const v = verdict();
+  $("summary").innerHTML = `<div class="verdict ${v.cls}" role="${v.cls === "disagree" ? "alert" : "status"}">
+      <div class="vhead">${v.head}</div><div class="vline">${v.line}</div></div>
+    <div class="pairs">${pairs}
+    <span class="pair"><b>${uniqueCount}</b> of ${S.length * 5} results found by only one strategy</span></div>`;
 
   // Document map
   let m = "";
@@ -418,7 +455,7 @@ function renderResults() {
   const maxScore = Math.max(...S.flatMap((k) => res.results[k].map((r) => r.score)), 0.01);
   $("cols").innerHTML = S.map((k) => `
     <div class="col ${k}">
-      <h3>${NAMES[k]} <small>${DESC[k]}</small></h3>
+      <h3>${NAMES[k]}</h3>
       ${res.results[k].map((r) => card(k, r, maxScore)).join("") || '<div class="empty">No chunks.</div>'}
     </div>`).join("");
 
@@ -438,6 +475,57 @@ function renderResults() {
   document.querySelectorAll(".locate").forEach((b) => (b.onclick = () => locate(+b.dataset.start, +b.dataset.end)));
 
   renderDocView();
+}
+
+// Which strategies disagree about the #1 passage, said in plain words.
+function verdict() {
+  const top = Object.fromEntries(S.map((k) => [k, res.results[k][0]]));
+  const list = (ks) => ks.map((k) => NAMES[k]).join(" and ");
+  if (S.some((k) => !top[k])) return { cls: "agree", head: "Not enough chunks to compare", line: "" };
+  if (res.top1_all_agree) {
+    return { cls: "agree", head: "✓ All three agree on the best passage",
+             line: `Each strategy's top result is ${describe(top.section)}.` };
+  }
+  const split = res.pairs.filter((p) => !p.top1_agree);
+  let head, groups;
+  if (split.length === 3) {
+    head = "All three strategies disagree on the best passage";
+    groups = S.map((k) => [k]);
+  } else if (split.length === 2) {
+    const odd = S.find((k) => split.every((p) => p.a === k || p.b === k));
+    const rest = S.filter((k) => k !== odd);
+    head = `${NAMES[odd]} disagrees with ${list(rest)} on the best passage`;
+    groups = [[odd], rest];
+  } else {
+    const { a, b } = split[0];
+    head = `${NAMES[a]} and ${NAMES[b]} disagree on the best passage`;
+    groups = [[a], [b]];
+  }
+  // Prefer a full passage over a tiny fragment to describe a group that agrees.
+  const pick = (g) => g.map((k) => top[k]).sort((x, y) => (y.end - y.start) - (x.end - x.start))[0];
+  const descs = groups.map((g) => describe(pick(g)));
+  const clash = new Set(descs).size < descs.length;  // same section, different text
+  const parts = groups.map((g, i) => `${list(g)} ${g.length > 1 ? "both pick" : "picks"} ${
+    clash ? describe(pick(g), true) : descs[i]}`);
+  const middle = S.filter((k) => !groups.flat().includes(k));
+  if (middle.length) parts.push(`${list(middle)} overlaps both`);
+  return { cls: "disagree", head: "⚠ " + head, line: parts.join(". ") + "." };
+}
+
+function describe(r, withSnippet = false) {
+  const len = r.end - r.start;
+  const raw = doc.text.slice(r.start, r.end).trim().replace(/\s+/g, " ");
+  if (len < 60) return `only “${esc(raw)}”, a ${len}-character fragment`;
+  const name = (path) => esc(path.slice(-2).join(" › "));
+  const a = r.section || [], b = r.section_end || [];
+  const where = !a.length
+    ? `a passage ${Math.round((r.start / doc.chars) * 100)}% of the way into the document`
+    : b.length && b.join() !== a.join()
+      ? `a passage spanning <b>${name(a)}</b> and <b>${name(b)}</b>`
+      : `a passage in <b>${name(a)}</b>`;
+  if (!withSnippet) return where;
+  const words = raw.split(" ").slice(0, 7).join(" ");
+  return `${where} starting “${esc(words)}…”`;
 }
 
 function card(k, r, maxScore) {
@@ -461,8 +549,8 @@ function card(k, r, maxScore) {
   return `<div class="res ${r.unique ? "unique" : ""}" data-k="${k}" data-rank="${r.rank}" data-start="${r.start}" data-end="${r.end}">
     <div class="reshead">
       <span class="rank">${r.rank}</span>
-      <span class="score">${r.score.toFixed(3)}</span>
-      <span class="scorebar"><i style="width:${Math.max(0, (r.score / maxScore) * 100)}%"></i></span>
+      <span class="score" title="${SCORE_TIP}">${r.score.toFixed(3)}</span>
+      <span class="scorebar" title="${SCORE_TIP}"><i style="width:${Math.max(0, (r.score / maxScore) * 100)}%"></i></span>
       <span class="meta">${r.end - r.start} chars</span>
     </div>
     <div class="badges">${badges.join("")}</div>
