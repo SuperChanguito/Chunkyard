@@ -13,10 +13,10 @@ from pydantic import BaseModel, Field
 from .chunking import STRATEGIES
 from .engine import Embedder, IndexedDoc, Store, query
 from .loaders import load_document
+from .samples import SAMPLES, SAMPLES_DIR
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
-SAMPLE = ROOT.parent / "samples" / "trailhead-tent-manual.md"
 MAX_UPLOAD = 20 * 1024 * 1024
 
 embedder = Embedder()
@@ -89,10 +89,22 @@ def upload(file: UploadFile = File(...), size: int = Form(500), overlap: int = F
     return _index(file.filename or "upload", text, size, overlap, max_chars)
 
 
+@app.get("/api/samples")
+def samples() -> list[dict]:
+    return [{"id": k, "title": v["title"], "blurb": v["blurb"], "questions": v["questions"],
+             "available": (SAMPLES_DIR / v["file"]).is_file()} for k, v in SAMPLES.items()]
+
+
 @app.post("/api/sample")
-def sample(size: int = Form(500), overlap: int = Form(100), max_chars: int = Form(1200)) -> dict:
-    text = load_document(SAMPLE.name, SAMPLE.read_bytes())
-    return _index(SAMPLE.name, text, size, overlap, max_chars)
+def sample(sample: str = Form("tent"), size: int = Form(500), overlap: int = Form(100),
+           max_chars: int = Form(1200)) -> dict:
+    if sample not in SAMPLES:
+        raise HTTPException(404, "Unknown sample.")
+    path = SAMPLES_DIR / SAMPLES[sample]["file"]
+    if not path.is_file():
+        raise HTTPException(404, f"Sample file not found. Put {path.name} in the samples folder.")
+    text = load_document(path.name, path.read_bytes())
+    return _index(path.name, text, size, overlap, max_chars) | {"sample": sample}
 
 
 class QueryIn(BaseModel):

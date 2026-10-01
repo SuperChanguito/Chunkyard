@@ -19,9 +19,21 @@ uv run python -m chunkyard --port 9000 --no-browser
 The first start downloads the embedding model (~90 MB) to
 `%USERPROFILE%\.cache\huggingface`. After that it works offline.
 
-Don't have the sample in mind? Click **Use the sample tent manual** and try the
-suggested questions, or open
-`http://127.0.0.1:8000/?sample=1&q=How+long+is+the+warranty%3F`.
+### Built-in samples
+
+- **Tent manual** (`samples/trailhead-tent-manual.md`): short and tidy, so the
+  strategies usually agree. A good baseline.
+- **FDA drug label** (`samples/repatha-fda-label.pdf`): the 65-page US
+  prescribing information for Repatha, with numbered sections, bullet lists,
+  results tables, and a patient leaflet bundled in. This is where the
+  strategies disagree. Get it from the
+  [FDA](https://www.accessdata.fda.gov/drugsatfda_docs/label/2025/125522s045lbl.pdf)
+  and save it under that name if it's missing; its button stays disabled until
+  the file is there.
+
+Each sample has suggested questions. To jump straight to one, open
+`http://127.0.0.1:8000/?sample=fda&q=How+should+Repatha+be+stored%3F`
+(`sample=tent` for the tent manual).
 
 ## The three strategies
 
@@ -43,8 +55,11 @@ section-aware chunking shines.
   chunk's characters). Each card lists the other strategies that found the
   same passage and at what rank. **Only *X* found this** marks a passage the
   other strategies missed.
-- **Summary line**: whether each pair of strategies picked the same #1
-  passage, plus how much of their top-5 text overlaps.
+- **Verdict**: when the strategies' #1 passages differ, a warning box names
+  who disagrees ("Paragraph disagrees with Fixed and Section…") and says where
+  each one's top hit came from. Agreement gets a quiet one-line note instead.
+  Below it: whether each pair picked the same #1 passage, and how much of their
+  top-5 text overlaps.
 - **Document map**: where each strategy's top-5 hits sit in the document.
   Hover a card to highlight matching cards in the other columns; click a
   block on the map to jump to its card.

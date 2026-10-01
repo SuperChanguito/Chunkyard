@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import bisect
 import os
 import threading
 import uuid
@@ -10,7 +11,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .chunking import STRATEGIES, Chunk, chunk_all
+from .chunking import STRATEGIES, Chunk, chunk_all, split_sections
 
 MODEL_NAME = os.environ.get("CHUNKYARD_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 MAX_DOCS = 5          # documents kept in memory
@@ -71,6 +72,13 @@ class IndexedDoc:
     chunks: dict[str, list[Chunk]]
     vectors: dict[str, np.ndarray]
     tokens: dict[str, list[int]]
+    section_starts: list[int]        # where each detected section begins
+    section_paths: list[list[str]]   # and its heading breadcrumb
+
+    def section_at(self, pos: int) -> list[str]:
+        """Heading breadcrumb of the section containing character `pos`."""
+        i = bisect.bisect_right(self.section_starts, pos) - 1
+        return self.section_paths[i] if i >= 0 else []
 
 
 class Store:
@@ -86,9 +94,14 @@ class Store:
             texts = [c.text for c in chunks[s]] or [""]
             vectors[s] = self.embedder.encode(texts)[: len(chunks[s])]
             tokens[s] = self.embedder.token_counts(texts)[: len(chunks[s])]
+        # Section locations let the UI say *where* each strategy's hit came
+        # from ("2.1 Recommended Dosage"), whichever strategy produced it.
+        sections = [((sec.header_span or sec.body_spans[0])[0], sec.path)
+                    for sec in split_sections(text) if sec.header_span or sec.body_spans]
         doc = IndexedDoc(uuid.uuid4().hex[:12], name, text,
                          {"size": size, "overlap": overlap, "max_chars": max_chars},
-                         chunks, vectors, tokens)
+                         chunks, vectors, tokens,
+                         [s for s, _ in sections], [p for _, p in sections])
         with self._lock:
             self.docs[doc.id] = doc
             while len(self.docs) > MAX_DOCS:
@@ -142,6 +155,8 @@ def query(store: Store, doc_id: str, question: str, k: int = 5) -> dict:
             "headers": doc.chunks[s][i].headers,
             "tokens": doc.tokens[s][i],
             "truncated": doc.tokens[s][i] > max_tokens,
+            "section": doc.section_at(doc.chunks[s][i].start),
+            "section_end": doc.section_at(doc.chunks[s][i].end - 1),
         } for r, i in enumerate(top)]
 
     # Which other strategies retrieved an overlapping passage, and at what rank?
