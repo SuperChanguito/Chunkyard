@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from .chunking import STRATEGIES
 from .engine import Embedder, IndexedDoc, Store, evaluate, query
 from .flags import too_small
+from . import generate as gen
 from .loaders import load_document
 from .samples import SAMPLES, SAMPLES_DIR
 
@@ -41,7 +42,8 @@ def index() -> FileResponse:
 
 @app.get("/api/status")
 def status() -> dict:
-    return {"model": embedder.name, "ready": embedder.ready, "error": embedder.error}
+    return {"model": embedder.name, "ready": embedder.ready, "error": embedder.error,
+            "generation": gen.status()}
 
 
 def _summary(doc: IndexedDoc) -> dict:
@@ -149,6 +151,46 @@ def ask(body: QueryIn) -> dict:
         raise HTTPException(404, "That document is no longer loaded. Upload it again.")
     except RuntimeError as e:
         raise HTTPException(503, str(e))
+
+
+class GenerateIn(BaseModel):
+    doc_id: str
+    question: str = Field(min_length=1, max_length=2000)
+    k: int = Field(5, ge=1, le=20)
+
+
+@app.post("/api/generate")
+def generate_answers(body: GenerateIn) -> dict:
+    """Optional: answer from each strategy's top chunks with the Claude API."""
+    try:
+        res = query(store, body.doc_id, body.question.strip(), body.k)
+    except KeyError:
+        raise HTTPException(404, "That document is no longer loaded. Upload it again.")
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    try:
+        import anthropic
+    except ImportError:
+        raise HTTPException(503, "The anthropic package isn't installed. Run: uv sync")
+    try:
+        return gen.generate(gen.make_client(), res["question"], res["results"])
+    except gen.GenerationError as e:
+        raise HTTPException(e.status, str(e))
+    except anthropic.AuthenticationError:
+        raise HTTPException(401, "The Claude API rejected the key. Check ANTHROPIC_API_KEY and restart Chunkyard.")
+    except anthropic.PermissionDeniedError:
+        raise HTTPException(403, f"This API key can't use {gen.MODEL}.")
+    except anthropic.RateLimitError:
+        raise HTTPException(429, "The Claude API is rate-limiting requests. Wait a minute and try again.")
+    except anthropic.APIConnectionError:
+        raise HTTPException(503, "Couldn't reach the Claude API. Check your internet connection.")
+    except anthropic.APIStatusError as e:
+        raise HTTPException(502, f"Claude API error ({e.status_code}): {e.message}")
+    except TypeError as e:
+        # The SDK raises this before sending when it finds no credentials at all.
+        if "auth" in str(e).lower() or "api_key" in str(e).lower():
+            raise HTTPException(401, "No Claude API key found. Set ANTHROPIC_API_KEY, then restart Chunkyard.")
+        raise
 
 
 @app.post("/api/evaluate")

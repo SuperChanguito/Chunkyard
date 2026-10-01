@@ -351,3 +351,78 @@ def test_query_results_carry_flags(sample_text):
     assert all(isinstance(r["flags"], list) for rs in res["results"].values() for r in rs)
     assert any("starts_mid_sentence" in r["flags"] or "ends_mid_sentence" in r["flags"]
                for r in res["results"]["fixed"])
+
+
+# --- optional generation step (simulated Claude client, no network) ----------
+
+class _Block:
+    def __init__(self, text):
+        self.type, self.text = "text", text
+
+
+class _Response:
+    def __init__(self, text, stop_reason="end_turn", model="claude-opus-5"):
+        self.content, self.stop_reason, self.model = [_Block(text)], stop_reason, model
+
+
+class FakeClaude:
+    """Stands in for anthropic.Anthropic(): records calls, returns canned text."""
+
+    def __init__(self, answers, comparison, refuse=()):
+        self.answers, self.comparison, self.refuse, self.calls = answers, comparison, refuse, []
+        self.beta = self
+        self.messages = self
+
+    def create(self, **kw):
+        import json as _json
+        self.calls.append(kw)
+        if "format" in kw.get("output_config", {}):
+            return _Response(_json.dumps(self.comparison))
+        prompt = kw["messages"][0]["content"]
+        for s, text in self.answers.items():
+            if f"[{s}]" in prompt:
+                return _Response("", "refusal") if s in self.refuse else _Response(text)
+        raise AssertionError("unexpected prompt")
+
+
+def _results():
+    # One recognisable passage per strategy so the fake can tell them apart.
+    return {s: [{"text": f"[{s}] passage one"}, {"text": "passage two"}] for s in ("fixed", "paragraph", "section")}
+
+
+def test_generate_answers_each_strategy_from_its_own_chunks():
+    from chunkyard import generate as gen
+    answers = {"fixed": "Two years [1].", "paragraph": "The passages don't contain the answer.", "section": "Two years [1]."}
+    comparison = {"agree": False, "summary": "Paragraph says it's missing.",
+                  "differences": [{"point": "Length", "fixed": "two years", "paragraph": "not stated", "section": "two years"}],
+                  "quotes": {"fixed": ["Two years", "invented phrase"], "paragraph": ["don't contain the answer"], "section": ["Two years"]}}
+    client = FakeClaude(answers, comparison)
+    out = gen.generate(client, "How long is the warranty?", _results())
+    assert {s: a["text"] for s, a in out["answers"].items()} == answers
+    assert len(client.calls) == 4                                  # 3 answers + 1 comparison
+    for call in client.calls:
+        assert call["fallbacks"] == "default" and call["betas"] == [gen.FALLBACK_BETA]
+        assert call["model"] == gen.MODEL
+    answer_calls = [c for c in client.calls if "format" not in c["output_config"]]
+    assert all("[1]\n" in c["messages"][0]["content"] and "[2]\npassage two" in c["messages"][0]["content"]
+               for c in answer_calls)
+    # Quotes that don't appear in the answer are dropped so highlights stay exact.
+    assert out["comparison"]["quotes"]["fixed"] == ["Two years"]
+    assert out["comparison"]["agree"] is False
+
+
+def test_generate_handles_a_refused_answer():
+    from chunkyard import generate as gen
+    client = FakeClaude({"fixed": "A.", "paragraph": "B.", "section": "C."}, {}, refuse=("paragraph",))
+    out = gen.generate(client, "q", _results())
+    assert out["answers"]["paragraph"] == {"text": None, "refused": True, "model": "claude-opus-5"}
+    assert out["comparison"] is None                               # can't compare only two
+    assert len(client.calls) == 3
+
+
+def test_generation_status_without_key(monkeypatch):
+    from chunkyard import generate as gen
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    st = gen.status()
+    assert st["has_key"] is False and st["model"] == gen.MODEL
