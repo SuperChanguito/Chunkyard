@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from .chunking import STRATEGIES
 from .engine import Embedder, IndexedDoc, Store, evaluate, query
+from .flags import too_small
 from .loaders import load_document
 from .samples import SAMPLES, SAMPLES_DIR
 
@@ -54,6 +55,7 @@ def _summary(doc: IndexedDoc) -> dict:
             "min_chars": min(lens, default=0),
             "max_chars": max(lens, default=0),
             "truncated": sum(t > max_tokens for t in doc.tokens[s]),
+            "too_small": too_small(sum(lens) / len(lens), min(lens)) if lens else None,
             "spans": [[c.start, c.end] for c in doc.chunks[s]],
         }
     return {"id": doc.id, "name": doc.name, "chars": len(doc.text), "text": doc.text,
