@@ -73,6 +73,11 @@ button { font: inherit; }
 .settings label.full { grid-column: 1 / -1; }
 .settings input { font: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); width: 100%; }
 .hint { font-size: 12px; color: var(--faint); margin: 8px 0 0; }
+.note { font-size: 13px; color: var(--muted); margin: -4px 0 12px; max-width: 72ch; }
+.how { flex-basis: 100%; font-size: 14px; color: var(--muted); }
+.how summary { cursor: pointer; color: var(--text); font-weight: 500; width: fit-content; }
+.how p { margin: 8px 0 0; max-width: 72ch; line-height: 1.6; }
+.stat .explain { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.45; }
 
 .docname { font-weight: 600; word-break: break-all; }
 .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
@@ -168,6 +173,10 @@ details.docview summary { cursor: pointer; font-weight: 600; }
     <p>Same document, same question, three ways to chunk it. See what each one retrieves.</p>
     <span class="pill" id="status">Loading model…</span>
     <button class="theme-btn" id="themeBtn" title="Toggle light/dark">◐</button>
+    <details class="how">
+      <summary>How this works</summary>
+      <p>A retrieval system can't read a whole document every time someone asks a question. It cuts the document into passages first, then fetches only the few most likely to hold the answer and shows those to the model. How you cut the document quietly decides what the system is capable of answering. Chunkyard cuts the same document three ways so you can watch that happen.</p>
+    </details>
   </header>
 
   <div class="grid-top">
@@ -178,6 +187,7 @@ details.docview summary { cursor: pointer; font-weight: 600; }
         <strong>Drop a .txt, .md, or .pdf</strong>
         or click to choose a file
       </label>
+      <p class="hint">Everything runs on this machine. The document is never uploaded anywhere.</p>
       <div class="or">or</div>
       <button class="btn secondary block" id="sampleBtn">Use the sample tent manual</button>
       <div class="settings">
@@ -191,6 +201,7 @@ details.docview summary { cursor: pointer; font-weight: 600; }
 
     <section class="card" id="docCard">
       <h2>2 · Chunks</h2>
+      <p class="note">The same document, cut three different ways. More chunks is not better. What matters is whether a chunk still makes sense on its own.</p>
       <div id="docInfo" class="empty">No document yet. Upload a file or try the sample.</div>
     </section>
   </div>
@@ -201,6 +212,7 @@ details.docview summary { cursor: pointer; font-weight: 600; }
       <input id="question" placeholder="Ask a question about the document…" autocomplete="off" disabled>
       <button class="btn" id="askBtn" disabled>Retrieve</button>
     </form>
+    <p class="hint">Your question gets converted into a list of numbers that represents its meaning. Every chunk was converted the same way. Finding relevant passages means finding the chunks whose numbers sit closest to your question's. That closeness is the score below.</p>
     <div class="examples hidden" id="examples"></div>
     <div class="error hidden" id="askErr"></div>
 
@@ -227,10 +239,11 @@ details.docview summary { cursor: pointer; font-weight: 600; }
 const S = ["fixed", "paragraph", "section"];
 const NAMES = { fixed: "Fixed", paragraph: "Paragraph", section: "Section" };
 const DESC = {
-  fixed: "every N chars, with overlap",
-  paragraph: "split on blank lines",
-  section: "headers kept with content",
+  fixed: "Cuts every N characters and ignores meaning entirely. Fast and predictable. Will slice a table or a sentence in half without noticing.",
+  paragraph: "Cuts where the author cut. Respects the writing, but paragraph lengths vary wildly and a heading becomes its own tiny chunk.",
+  section: "Cuts at headings and keeps each heading attached to the text beneath it. Every passage knows what part of the document it came from. More work to build, and it needs a document that actually has structure.",
 };
+const SCORE_TIP = "How closely this passage matches the meaning of your question. It measures similarity, not truth. A passage can score highly and still be the wrong answer.";
 const BADGE = { fixed: "fx", paragraph: "pg", section: "sc" };
 const SAMPLE_QS = [
   "How long is the warranty?",
@@ -348,6 +361,7 @@ function renderDoc() {
       <div class="sub">avg ${st.avg_chars} chars · ${st.min_chars}–${st.max_chars}</div>
       ${st.truncated ? `<div class="warn">${st.truncated} chunk${st.truncated > 1 ? "s" : ""} too long for the model (end ignored)</div>` : ""}
       <div class="strip" title="Where each chunk starts in the document">${ticks}</div>
+      <div class="explain">${DESC[k]}</div>
     </div>`;
   }
   $("docInfo").className = "";
@@ -418,7 +432,7 @@ function renderResults() {
   const maxScore = Math.max(...S.flatMap((k) => res.results[k].map((r) => r.score)), 0.01);
   $("cols").innerHTML = S.map((k) => `
     <div class="col ${k}">
-      <h3>${NAMES[k]} <small>${DESC[k]}</small></h3>
+      <h3>${NAMES[k]}</h3>
       ${res.results[k].map((r) => card(k, r, maxScore)).join("") || '<div class="empty">No chunks.</div>'}
     </div>`).join("");
 
@@ -461,8 +475,8 @@ function card(k, r, maxScore) {
   return `<div class="res ${r.unique ? "unique" : ""}" data-k="${k}" data-rank="${r.rank}" data-start="${r.start}" data-end="${r.end}">
     <div class="reshead">
       <span class="rank">${r.rank}</span>
-      <span class="score">${r.score.toFixed(3)}</span>
-      <span class="scorebar"><i style="width:${Math.max(0, (r.score / maxScore) * 100)}%"></i></span>
+      <span class="score" title="${SCORE_TIP}">${r.score.toFixed(3)}</span>
+      <span class="scorebar" title="${SCORE_TIP}"><i style="width:${Math.max(0, (r.score / maxScore) * 100)}%"></i></span>
       <span class="meta">${r.end - r.start} chars</span>
     </div>
     <div class="badges">${badges.join("")}</div>
