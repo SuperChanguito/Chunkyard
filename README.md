@@ -26,10 +26,9 @@ The first start downloads the embedding model (~90 MB) to
 - **FDA drug label** (`samples/repatha-fda-label.pdf`): the 65-page US
   prescribing information for Repatha, with numbered sections, bullet lists,
   results tables, and a patient leaflet bundled in. This is where the
-  strategies disagree. Get it from the
-  [FDA](https://www.accessdata.fda.gov/drugsatfda_docs/label/2025/125522s045lbl.pdf)
-  and save it under that name if it's missing; its button stays disabled until
-  the file is there.
+  strategies disagree. It's a public US government document, included here
+  unchanged from the
+  [FDA's website](https://www.accessdata.fda.gov/drugsatfda_docs/label/2025/125522s045lbl.pdf).
 
 Each sample has suggested questions. To jump straight to one, open
 `http://127.0.0.1:8000/?sample=fda&q=How+should+Repatha+be+stored%3F`
