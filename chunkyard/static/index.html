@@ -186,6 +186,29 @@ details.docview summary { cursor: pointer; font-weight: 600; }
 .busy { color: var(--muted); font-size: 14px; }
 .hidden { display: none !important; }
 
+/* optional generation */
+.gen { border: 1.5px dashed var(--border); border-radius: var(--radius); padding: 14px 16px; margin: 4px 0 16px; }
+.genhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.genhead h3 { margin: 0; font-size: 15px; }
+.optpill { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--info); background: var(--info-soft); border: 1px solid var(--info); border-radius: 99px; padding: 1px 9px; }
+.genwhat { font-size: 13px; color: var(--muted); margin: 6px 0 10px; max-width: 90ch; }
+.genwhat code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 1px 4px; border-radius: 4px; }
+.genctl { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.genctl label { font-size: 13px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+.genverdict { margin: 14px 0 10px; }
+.answers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 960px) { .answers { grid-template-columns: minmax(0, 1fr); } }
+.answer { background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--c); border-radius: 8px; padding: 10px 12px; font-size: 14px; line-height: 1.55; }
+.answer h4 { margin: 0 0 6px; font-size: 13px; color: var(--c); }
+.answer .none { color: var(--muted); font-style: italic; }
+.answer mark.diff { background: var(--warn-soft); color: inherit; box-shadow: inset 0 -2px var(--warn); border-radius: 2px; padding: 0 1px; }
+.cite { background: none; border: 0; padding: 0 1px; font: inherit; font-size: 12px; color: var(--c); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.difftable { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+.difftable th, .difftable td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.difftable th { font-size: 12px; color: var(--muted); font-weight: 600; }
+.difftable td.pt { font-weight: 600; }
+.genmeta { font-size: 12px; color: var(--faint); margin-top: 8px; }
+
 /* scoring */
 .answerbar { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
 .answerbar b { color: var(--text); }
@@ -242,7 +265,7 @@ details.docview summary { cursor: pointer; font-weight: 600; }
         <strong>Drop a .txt, .md, or .pdf</strong>
         or click to choose a file
       </label>
-      <p class="hint">Everything runs on this machine. The document is never uploaded anywhere.</p>
+      <p class="hint">Everything runs on this machine. The document is never uploaded anywhere, unless you use the optional AI answers in section 3, which send the question and the retrieved passages to the Claude API.</p>
       <div class="or">or try a built-in sample</div>
       <div class="samples" id="samples"></div>
       <div class="settings">
@@ -274,6 +297,16 @@ details.docview summary { cursor: pointer; font-weight: 600; }
     <div id="results" class="hidden">
       <div class="summary" id="summary"></div>
       <div class="map" id="map"></div>
+      <section class="gen" id="gen" aria-labelledby="genTitle">
+        <div class="genhead"><span class="optpill">Optional</span><h3 id="genTitle">AI answers from each strategy's passages</h3></div>
+        <p class="genwhat" id="genWhat">Checking whether the Claude API is set up…</p>
+        <div class="genctl">
+          <button class="btn secondary" id="genBtn" disabled>Generate answers</button>
+          <label><input type="checkbox" id="genAuto" disabled> Generate automatically for each new question</label>
+        </div>
+        <div class="error hidden" id="genErr"></div>
+        <div id="genOut"></div>
+      </section>
       <div class="answerbar" id="answerBar"></div>
       <div class="cols" id="cols"></div>
       <details class="docview" id="docview">
@@ -357,6 +390,7 @@ async function pollStatus() {
     const el = $("status");
     const short = r.model.split("/").pop();
     if (r.error) { el.textContent = "Model failed to load"; el.className = "pill err"; el.title = r.error; return; }
+    if (r.generation) setupGeneration(r.generation);
     if (r.ready) { modelReady = true; el.textContent = short + " ready"; el.className = "pill ok"; el.title = r.model; return; }
     el.textContent = "Loading " + short + "… (first run downloads ~90 MB)";
   } catch { $("status").textContent = "Server not reachable"; $("status").className = "pill err"; }
@@ -408,6 +442,7 @@ async function index(source) {
     const sameText = doc && doc.fingerprint === body.fingerprint;
     doc = body; lastSource = source;
     if (!sameText) { loadStoredAnswers(); $("evalOut").innerHTML = ""; }
+    clearGeneration();
     renderSet();
     renderDoc();
     $("results").classList.add("hidden");
@@ -667,6 +702,10 @@ async function ask() {
 
 function renderResults() {
   $("results").classList.remove("hidden");
+  if (genFor !== qkey(res.question)) {
+    clearGeneration();
+    if (genReady && $("genAuto").checked) generateAnswers();
+  }
 
   // Summary: the verdict on the #1 passages, then the quieter details.
   const pairs = res.pairs.map((p) =>
@@ -834,6 +873,102 @@ function linkCards(el, on) {
     const hit = overlap(a, { start: +o.dataset.start, end: +o.dataset.end }) >= AGREE;
     o.classList.toggle("linked", on && hit);
   });
+}
+
+// ---------- optional generation (Claude API) ----------
+// Off unless the viewer clicks Generate (or ticks the auto box). Nothing is
+// sent anywhere otherwise.
+let genReady = false, genFor = null, genBusy = false;
+
+function setupGeneration(g) {
+  genReady = g.installed && g.has_key;
+  const model = `<code>${esc(g.model)}</code>`;
+  $("genWhat").innerHTML = !g.installed
+    ? `Turned off: the <code>anthropic</code> package isn't installed. Run <code>uv sync</code> in the Chunkyard folder to add it.`
+    : !g.has_key
+      ? `Not set up. This optional step sends the question and each strategy's top passages to Anthropic's Claude API (${model}) and shows the three answers side by side. To turn it on, set an <code>ANTHROPIC_API_KEY</code> environment variable and restart Chunkyard. Everything else works without it.`
+      : `When you click Generate, the question and each strategy's top 5 passages are sent to Anthropic's Claude API (${model}): 3 answers, then 1 comparison, so 4 paid API calls per question. Nothing is sent unless you click.`;
+  $("genBtn").disabled = !genReady || genBusy;
+  $("genAuto").disabled = !genReady;
+  try { $("genAuto").checked = genReady && localStorage.getItem("chunkyard-gen-auto") === "1"; } catch {}
+}
+$("genAuto").onchange = () => { try { localStorage.setItem("chunkyard-gen-auto", $("genAuto").checked ? "1" : "0"); } catch {} };
+$("genBtn").onclick = () => generateAnswers();
+
+function clearGeneration() {
+  genFor = null;
+  $("genOut").innerHTML = "";
+  $("genErr").classList.add("hidden");
+}
+
+async function generateAnswers() {
+  if (!res || genBusy) return;
+  const question = res.question;
+  genBusy = true; $("genBtn").disabled = true; $("genBtn").textContent = "Generating… (4 API calls)";
+  $("genErr").classList.add("hidden");
+  try {
+    const r = await fetch("/api/generate", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ doc_id: doc.id, question, k: 5 }),
+    });
+    const body = await r.json();
+    if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Generation failed.");
+    if (!res || res.question !== question) return;  // the viewer moved on
+    genFor = qkey(question);
+    renderGeneration(body);
+  } catch (e) {
+    $("genErr").textContent = e.message; $("genErr").classList.remove("hidden");
+  } finally {
+    genBusy = false; $("genBtn").disabled = !genReady; $("genBtn").textContent = "Generate answers";
+  }
+}
+
+// Escape an answer, mark the quoted phrases that differ, and link [n] citations to the cards.
+function answerHTML(k, text, quotes) {
+  const ranges = [];
+  for (const q of quotes || []) {
+    for (let i = text.indexOf(q); i >= 0; i = text.indexOf(q, i + q.length)) ranges.push([i, i + q.length]);
+  }
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const r of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]); else merged.push([...r]);
+  }
+  const cite = (h) => h.replace(/\[(\d+)\]/g, (m, n) => `<button class="cite" data-k="${k}" data-rank="${n}" title="Show passage ${n}">[${n}]</button>`);
+  let out = "", pos = 0;
+  for (const [a, b] of merged) {
+    out += cite(esc(text.slice(pos, a))) + `<mark class="diff">${cite(esc(text.slice(a, b)))}</mark>`;
+    pos = b;
+  }
+  return out + cite(esc(text.slice(pos)));
+}
+
+function renderGeneration(g) {
+  const c = g.comparison;
+  let verdictHTML = "";
+  if (c && c.agree) {
+    verdictHTML = `<div class="verdict agree genverdict"><div class="vhead">✓ The three answers agree on the facts</div><div class="vline">${esc(c.summary)}</div></div>`;
+  } else if (c) {
+    verdictHTML = `<div class="verdict disagree genverdict" role="alert"><div class="vhead">⚠ The answers differ factually</div><div class="vline">${esc(c.summary)} Highlighted below.</div></div>`;
+  } else {
+    verdictHTML = `<div class="verdict agree genverdict"><div class="vhead">Not compared</div><div class="vline">One answer is missing, so the three couldn't be compared.</div></div>`;
+  }
+  const cards = S.map((k) => {
+    const a = g.answers[k];
+    const body = a.refused ? `<span class="none">Claude declined to answer from these passages.</span>`
+      : answerHTML(k, a.text, c && !c.agree ? c.quotes[k] : []) + (a.truncated ? ` <span class="none">(cut off)</span>` : "");
+    return `<div class="answer ${k}"><h4>${NAMES[k]}</h4>${body}</div>`;
+  }).join("");
+  const diffs = c && !c.agree && c.differences.length ? `
+    <div class="tablewrap"><table class="difftable">
+      <thead><tr><th>Point</th>${S.map((k) => `<th>${NAMES[k]}</th>`).join("")}</tr></thead>
+      <tbody>${c.differences.map((d) => `<tr><td class="pt">${esc(d.point)}</td>${S.map((k) => `<td>${esc(d[k])}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table></div>` : "";
+  const models = [...new Set(S.map((k) => g.answers[k].model).filter(Boolean))].join(", ");
+  $("genOut").innerHTML = verdictHTML + `<div class="answers">${cards}</div>` + diffs +
+    `<div class="genmeta">Written by ${esc(models || g.model)} from each strategy's top 5 passages only. Numbers in brackets are passage ranks; click one to see it. AI answers can be wrong; check them against the passages.</div>`;
+  $("genOut").querySelectorAll(".cite").forEach((b) => (b.onclick = () => focusCard(b.dataset.k, +b.dataset.rank)));
 }
 
 function focusCard(k, rank) {

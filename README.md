@@ -6,6 +6,9 @@ question, and see the top 5 chunks from three strategies side by side.
 
 Everything runs on your computer. Embeddings come from a local
 [sentence-transformers](https://www.sbert.net/) model, so no API key is needed.
+The one exception is an **optional** step, off by default, that asks the
+Claude API to answer from each strategy's passages (see
+[Optional: AI answers](#optional-ai-answers)).
 
 ## Run it
 
@@ -78,6 +81,30 @@ section-aware chunking shines.
   characters, or its smallest is under 30, so it's producing fragments too
   small to be useful on this document.
 
+## Optional: AI answers
+
+Retrieval is only half of RAG. This optional step does the other half: for
+each strategy, it sends the question and that strategy's top 5 passages to
+Claude and shows the three answers side by side above the chunk columns. A
+fourth call compares them and highlights where they **differ factually**
+(different numbers, durations, conditions, or one answer saying the
+information is missing), with a table of the differences.
+
+- **Off by default.** Nothing is sent unless you click **Generate answers**
+  (or tick *Generate automatically for each new question*). Without a key, the
+  panel explains how to set one up, and the rest of Chunkyard works as usual.
+- **What leaves your computer:** the question and the retrieved passages, sent
+  to Anthropic's API. The rest of the document isn't sent.
+- **Cost:** 4 paid API calls per question (3 answers + 1 comparison).
+- **Setup:** create a key at [console.anthropic.com](https://console.anthropic.com),
+  then in a Command Prompt run `setx ANTHROPIC_API_KEY "your-key"`, close it, and
+  restart Chunkyard. The model is `claude-opus-5`; set `CHUNKYARD_LLM_MODEL` to
+  use another.
+- Answers are told to use only the passages and to say when the answer isn't
+  there, so a strategy that retrieved the wrong passages produces a visibly
+  worse answer. Citations like [2] link to that strategy's passage. AI
+  answers can still be wrong; check them against the passages.
+
 ## Scoring: which strategy was right?
 
 1. Ask a question and click **This is the answer** on the passage that
@@ -133,7 +160,9 @@ To use a different model, set `CHUNKYARD_MODEL` (for example
 
 - `chunkyard/chunking.py`: the three strategies and heading detection
 - `chunkyard/loaders.py`: text/PDF loading and PDF paragraph inference
-- `chunkyard/engine.py`: embedding, top-k retrieval, cross-strategy agreement
+- `chunkyard/engine.py`: embedding, top-k retrieval, cross-strategy agreement, scoring
+- `chunkyard/flags.py`: warning flags for chunks and strategies
+- `chunkyard/generate.py`: the optional Claude API answers and comparison
 - `chunkyard/app.py`: FastAPI endpoints
 - `chunkyard/static/index.html`: the single-page front end
 
