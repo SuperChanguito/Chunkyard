@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .chunking import STRATEGIES
-from .engine import Embedder, IndexedDoc, Store, query
+from .engine import Embedder, IndexedDoc, Store, evaluate, query
 from .loaders import load_document
 from .samples import SAMPLES, SAMPLES_DIR
 
@@ -57,6 +57,7 @@ def _summary(doc: IndexedDoc) -> dict:
             "spans": [[c.start, c.end] for c in doc.chunks[s]],
         }
     return {"id": doc.id, "name": doc.name, "chars": len(doc.text), "text": doc.text,
+            "fingerprint": doc.fingerprint,
             "settings": doc.settings, "stats": stats, "max_tokens": max_tokens}
 
 
@@ -107,16 +108,52 @@ def sample(sample: str = Form("tent"), size: int = Form(500), overlap: int = For
     return _index(path.name, text, size, overlap, max_chars) | {"sample": sample}
 
 
+class Span(BaseModel):
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+
+
 class QueryIn(BaseModel):
     doc_id: str
     question: str = Field(min_length=1, max_length=2000)
     k: int = Field(5, ge=1, le=20)
+    answer: Span | None = None  # the marked answer for this question, if any
+
+
+class EvalItem(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    answer: Span
+
+
+class EvalIn(BaseModel):
+    doc_id: str
+    items: list[EvalItem] = Field(min_length=1, max_length=500)
+    k: int = Field(5, ge=1, le=20)
+
+
+def _span(doc_id: str, span: Span) -> tuple[int, int]:
+    n = len(store.get(doc_id).text)
+    if not span.start < span.end <= n:
+        raise HTTPException(400, "A marked answer doesn't fit this document. Was it saved for a different file?")
+    return span.start, span.end
 
 
 @app.post("/api/query")
 def ask(body: QueryIn) -> dict:
     try:
-        return query(store, body.doc_id, body.question.strip(), body.k)
+        answer = _span(body.doc_id, body.answer) if body.answer else None
+        return query(store, body.doc_id, body.question.strip(), body.k, answer)
+    except KeyError:
+        raise HTTPException(404, "That document is no longer loaded. Upload it again.")
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+
+
+@app.post("/api/evaluate")
+def run_set(body: EvalIn) -> dict:
+    try:
+        items = [(it.question.strip(), _span(body.doc_id, it.answer)) for it in body.items]
+        return evaluate(store, body.doc_id, items, body.k)
     except KeyError:
         raise HTTPException(404, "That document is no longer loaded. Upload it again.")
     except RuntimeError as e:

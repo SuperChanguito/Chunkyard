@@ -14,7 +14,7 @@
   --paragraph: #1d4ed8; --paragraph-soft: #dfe8fd;
   --section: #047857; --section-soft: #d7f2e6;
   --shared: #8b8579; --shared-soft: #e9e6df; --all: #57534a; --all-soft: #d6d2c8;
-  --warn: #a16207; --warn-soft: #fdf3d3; --bad: #b91c1c; --good: #047857;
+  --warn: #a16207; --warn-soft: #fdf3d3; --bad: #b91c1c; --good: #047857; --good-soft: #d7f2e6;
   --radius: 10px; --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
   color-scheme: light;
 }
@@ -26,7 +26,7 @@
     --fixed: #fb923c; --fixed-soft: #3d2516; --paragraph: #7aa2ff; --paragraph-soft: #1d2847;
     --section: #34d399; --section-soft: #123528;
     --shared: #a29e95; --shared-soft: #33312c; --all: #d6d2c8; --all-soft: #45423b;
-    --warn: #facc15; --warn-soft: #3a3113; --bad: #f87171; --good: #34d399;
+    --warn: #facc15; --warn-soft: #3a3113; --bad: #f87171; --good: #34d399; --good-soft: #123528;
     color-scheme: dark;
   }
 }
@@ -37,7 +37,7 @@
   --fixed: #fb923c; --fixed-soft: #3d2516; --paragraph: #7aa2ff; --paragraph-soft: #1d2847;
   --section: #34d399; --section-soft: #123528;
   --shared: #a29e95; --shared-soft: #33312c; --all: #d6d2c8; --all-soft: #45423b;
-  --warn: #facc15; --warn-soft: #3a3113; --bad: #f87171; --good: #34d399;
+  --warn: #facc15; --warn-soft: #3a3113; --bad: #f87171; --good: #34d399; --good-soft: #123528;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -176,6 +176,40 @@ details.docview summary { cursor: pointer; font-weight: 600; }
 .error { color: var(--bad); font-size: 14px; margin-top: 8px; }
 .busy { color: var(--muted); font-size: 14px; }
 .hidden { display: none !important; }
+
+/* scoring */
+.answerbar { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
+.answerbar b { color: var(--text); }
+.colverdict { font-size: 13px; font-weight: 600; padding: 6px 10px; border-radius: 6px; margin-bottom: 8px; border: 1px solid transparent; }
+.colverdict.found { color: var(--good); background: var(--good-soft); }
+.colverdict.missing { color: var(--warn); background: var(--warn-soft); border-color: var(--warn); }
+.res.answer { box-shadow: 0 0 0 2px var(--good); }
+.badge.ans { background: var(--good); color: var(--surface); font-weight: 600; }
+.link.mark { color: var(--good); font-weight: 600; }
+.set-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.set-actions label.btn { display: inline-flex; align-items: center; }
+.setlist { width: 100%; border-collapse: collapse; font-size: 13px; }
+.setlist td { padding: 6px 8px; border-top: 1px solid var(--border); vertical-align: top; }
+.setlist td.q { font-weight: 500; }
+.setlist td.a { color: var(--muted); }
+.setlist .rm { background: none; border: 0; color: var(--faint); cursor: pointer; font-size: 16px; line-height: 1; }
+.setlist .rm:hover { color: var(--bad); }
+.qlink { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 3px; }
+.evalout { margin-top: 16px; }
+.evalout h3 { font-size: 16px; margin: 0 0 4px; }
+.scoretable { width: 100%; border-collapse: collapse; margin: 10px 0 18px; font-variant-numeric: tabular-nums; }
+.scoretable th, .scoretable td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.scoretable th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+.scoretable td.name { font-weight: 700; color: var(--c); }
+.scoretable td.big { font-size: 20px; font-weight: 700; }
+.scoretable tr.best td { background: var(--good-soft); }
+.scoretable .bestpill { font-size: 11px; font-weight: 700; color: var(--surface); background: var(--good); border-radius: 99px; padding: 1px 8px; margin-left: 6px; vertical-align: 2px; }
+.ranktable { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.ranktable th, .ranktable td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.ranktable th { font-size: 12px; color: var(--muted); font-weight: 600; }
+.ranktable td.r1 { color: var(--good); font-weight: 700; }
+.ranktable td.miss { color: var(--warn); font-weight: 600; }
+.tablewrap { overflow-x: auto; }
 </style>
 </head>
 <body>
@@ -231,6 +265,7 @@ details.docview summary { cursor: pointer; font-weight: 600; }
     <div id="results" class="hidden">
       <div class="summary" id="summary"></div>
       <div class="map" id="map"></div>
+      <div class="answerbar" id="answerBar"></div>
       <div class="cols" id="cols"></div>
       <details class="docview" id="docview">
         <summary>Show retrieved passages in the full document</summary>
@@ -244,6 +279,19 @@ details.docview summary { cursor: pointer; font-weight: 600; }
         <div class="doctext" id="doctext"></div>
       </details>
     </div>
+  </section>
+
+  <section class="card" id="scoreCard" style="margin-top:16px">
+    <h2>4 · Score</h2>
+    <p class="note">Mark the correct passage for a few questions, then run them all at once to see which strategy finds the answer most reliably.</p>
+    <div id="setInfo" class="empty">Load a document to start marking answers.</div>
+    <div class="set-actions">
+      <button class="btn" id="runSetBtn" disabled>Run saved set</button>
+      <button class="btn secondary" id="saveSetBtn" disabled>Save to file</button>
+      <label class="btn secondary" id="loadSetLbl">Load from file<input type="file" id="loadSet" accept=".json,application/json" hidden></label>
+    </div>
+    <div class="error hidden" id="setErr"></div>
+    <div class="evalout" id="evalOut"></div>
   </section>
 </div>
 
@@ -337,7 +385,10 @@ async function index(source) {
     const r = await fetch(url, { method: "POST", body: fd });
     const body = await r.json();
     if (!r.ok) throw new Error(body.detail || "Upload failed.");
+    const sameText = doc && doc.fingerprint === body.fingerprint;
     doc = body; lastSource = source;
+    if (!sameText) { loadStoredAnswers(); $("evalOut").innerHTML = ""; }
+    renderSet();
     renderDoc();
     $("results").classList.add("hidden");
     $("question").disabled = false; $("askBtn").disabled = false; $("rechunkBtn").disabled = false;
@@ -401,6 +452,177 @@ function renderExamples(source) {
 // ---------- ask ----------
 $("askForm").onsubmit = (e) => { e.preventDefault(); ask(); };
 
+// ---------- marked answers (per document, per question) ----------
+// An answer is a span of the document text. Spans don't depend on chunking,
+// so the same answers can score all three strategies, at any settings.
+let answers = {};  // normalized question -> {question, start, end, text}
+const qkey = (q) => q.trim().replace(/\s+/g, " ").toLowerCase();
+const storeKey = () => "chunkyard-answers:" + doc.fingerprint;
+
+function loadStoredAnswers() {
+  try { answers = JSON.parse(localStorage.getItem(storeKey()) || "{}"); } catch { answers = {}; }
+}
+function persistAnswers() {
+  try { localStorage.setItem(storeKey(), JSON.stringify(answers)); } catch {}
+  renderSet();
+}
+
+function markAnswer(k, rank) {
+  const r = res.results[k].find((x) => x.rank === rank);
+  const cardEl = document.querySelector(`.res[data-k="${k}"][data-rank="${rank}"]`);
+  let start = r.start, end = r.end;
+  // If the viewer selected words inside this chunk, the answer is just those words.
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed && cardEl.contains(sel.anchorNode) && cardEl.contains(sel.focusNode)) {
+    const picked = sel.toString().trim();
+    if (picked.length >= 3) {
+      const i = doc.text.indexOf(picked, r.start);
+      if (i < 0 || i + picked.length > r.end) {
+        showAskError("Couldn't match that selection to the document. Select words in the passage itself, not the heading path or the … markers.");
+        return;
+      }
+      start = i; end = i + picked.length;
+    }
+  }
+  answers[qkey(res.question)] = { question: res.question, start, end, text: doc.text.slice(start, end) };
+  persistAnswers();
+  rerun();
+}
+
+function clearAnswer() {
+  delete answers[qkey(res.question)];
+  persistAnswers();
+  rerun();
+}
+
+function rerun() {
+  $("question").value = res.question;
+  ask();
+}
+
+function showAskError(msg) { $("askErr").textContent = msg; $("askErr").classList.remove("hidden"); }
+
+function snippet(t, n = 90) {
+  t = t.replace(/\s+/g, " ").trim();
+  return t.length > n ? t.slice(0, n - 1) + "…" : t;
+}
+
+function renderSet() {
+  const items = Object.values(answers);
+  $("saveSetBtn").disabled = !doc || !items.length;
+  $("runSetBtn").disabled = !doc || !items.length;
+  if (!doc) { $("setInfo").className = "empty"; $("setInfo").textContent = "Load a document to start marking answers."; return; }
+  if (!items.length) {
+    $("setInfo").className = "empty";
+    $("setInfo").textContent = "No answers marked for this document yet. Ask a question, then click “This is the answer” on the passage that answers it.";
+    return;
+  }
+  $("setInfo").className = "";
+  $("setInfo").innerHTML = `<div class="meta" style="margin-bottom:6px">${items.length} marked question${items.length > 1 ? "s" : ""} for ${esc(doc.name)}</div>
+    <div class="tablewrap"><table class="setlist"><tbody>${items.map((it) => `
+      <tr><td class="q"><button class="qlink" data-q="${esc(it.question)}">${esc(it.question)}</button></td>
+      <td class="a">“${esc(snippet(it.text))}”</td>
+      <td><button class="rm" title="Remove" data-key="${esc(qkey(it.question))}">×</button></td></tr>`).join("")}
+    </tbody></table></div>`;
+  $("setInfo").querySelectorAll(".qlink").forEach((b) => (b.onclick = () => {
+    $("question").value = b.dataset.q; ask(); $("question").scrollIntoView({ behavior: "smooth", block: "center" });
+  }));
+  $("setInfo").querySelectorAll(".rm").forEach((b) => (b.onclick = () => {
+    delete answers[b.dataset.key]; persistAnswers();
+    if (res && qkey(res.question) === b.dataset.key) rerun();
+  }));
+}
+
+$("saveSetBtn").onclick = () => {
+  const data = {
+    format: "chunkyard-answer-set", version: 1,
+    document: { name: doc.name, fingerprint: doc.fingerprint, chars: doc.chars },
+    saved: new Date().toISOString(),
+    items: Object.values(answers).map((a) => ({ question: a.question, answer: { start: a.start, end: a.end, text: a.text } })),
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = doc.name.replace(/\.[^.]+$/, "") + "-answers.json";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+
+$("loadSet").onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  $("setErr").classList.add("hidden");
+  try {
+    if (!doc) throw new Error("Load the document first, then load its answer set.");
+    let data;
+    try { data = JSON.parse(await f.text()); } catch { throw new Error("That file isn't valid JSON."); }
+    if (data.format !== "chunkyard-answer-set" || !Array.isArray(data.items)) throw new Error("That file isn't a Chunkyard answer set.");
+    if (data.document?.fingerprint !== doc.fingerprint) {
+      throw new Error(`This set was made for “${data.document?.name || "another document"}”. Load that document first, then load the set.`);
+    }
+    let n = 0;
+    for (const it of data.items) {
+      const { start, end, text } = it.answer || {};
+      if (typeof it.question !== "string" || doc.text.slice(start, end) !== text) continue;
+      answers[qkey(it.question)] = { question: it.question, start, end, text };
+      n++;
+    }
+    persistAnswers();
+    if (res) rerun();
+    if (n < data.items.length) throw new Error(`Loaded ${n} of ${data.items.length} answers; the rest didn't match this document.`);
+  } catch (err) {
+    $("setErr").textContent = err.message; $("setErr").classList.remove("hidden");
+  }
+};
+$("loadSetLbl").onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("loadSet").click(); } };
+$("loadSetLbl").tabIndex = 0;
+
+$("runSetBtn").onclick = async () => {
+  const items = Object.values(answers);
+  $("setErr").classList.add("hidden");
+  $("runSetBtn").disabled = true; $("runSetBtn").textContent = `Running ${items.length} questions…`;
+  try {
+    const r = await fetch("/api/evaluate", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ doc_id: doc.id, k: 5, items: items.map((a) => ({ question: a.question, answer: { start: a.start, end: a.end } })) }),
+    });
+    const body = await r.json();
+    if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Couldn't run the set.");
+    renderEval(body);
+  } catch (err) {
+    $("setErr").textContent = err.message; $("setErr").classList.remove("hidden");
+  } finally { $("runSetBtn").textContent = "Run saved set"; renderSet(); }
+};
+
+function renderEval(out) {
+  const sm = out.summary, n = out.rows.length, s = doc.settings;
+  // Best = most answers found; ties broken by the lower average rank.
+  const order = [...S].sort((a, b) => (sm[b].found - sm[a].found) || ((sm[a].avg_rank ?? 99) - (sm[b].avg_rank ?? 99)));
+  const best = sm[order[0]].found > 0 && !(sm[order[1]].found === sm[order[0]].found && sm[order[1]].avg_rank === sm[order[0]].avg_rank)
+    ? order[0] : null;
+  const cell = (rank) => rank == null ? `<td class="miss">Not in top ${out.k}</td>` : `<td class="${rank === 1 ? "r1" : ""}">#${rank}</td>`;
+  $("evalOut").innerHTML = `
+    <h3>Results: ${n} question${n > 1 ? "s" : ""}</h3>
+    <div class="meta">${esc(doc.name)} · fixed ${s.size}/${s.overlap} overlap · max ${s.max_chars} · change the settings in section 1 and run again to compare</div>
+    <div class="tablewrap"><table class="scoretable">
+      <thead><tr><th>Strategy</th><th>Answers found in top ${out.k}</th><th>Average rank (when found)</th></tr></thead>
+      <tbody>${S.map((k) => `
+        <tr class="${k} ${k === best ? "best" : ""}">
+          <td class="name">${NAMES[k]}${k === best ? '<span class="bestpill">Best</span>' : ""}</td>
+          <td class="big">${sm[k].found} <span class="sub">of ${n}</span></td>
+          <td class="big">${sm[k].avg_rank == null ? "–" : sm[k].avg_rank.toFixed(1)}</td>
+        </tr>`).join("")}
+      </tbody></table></div>
+    <div class="tablewrap"><table class="ranktable">
+      <thead><tr><th>Question</th>${S.map((k) => `<th>${NAMES[k]}</th>`).join("")}</tr></thead>
+      <tbody>${out.rows.map((row) => `<tr><td><button class="qlink" data-q="${esc(row.question)}">${esc(row.question)}</button></td>${S.map((k) => cell(row.ranks[k])).join("")}</tr>`).join("")}</tbody>
+    </table></div>`;
+  $("evalOut").querySelectorAll(".qlink").forEach((b) => (b.onclick = () => {
+    $("question").value = b.dataset.q; ask(); $("question").scrollIntoView({ behavior: "smooth", block: "center" });
+  }));
+  $("evalOut").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 let res = null;
 async function ask() {
   const q = $("question").value.trim();
@@ -410,7 +632,7 @@ async function ask() {
   try {
     const r = await fetch("/api/query", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ doc_id: doc.id, question: q, k: 5 }),
+      body: JSON.stringify({ doc_id: doc.id, question: q, k: 5, answer: answers[qkey(q)] ? { start: answers[qkey(q)].start, end: answers[qkey(q)].end } : null }),
     });
     const body = await r.json();
     if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Query failed.");
@@ -451,11 +673,26 @@ function renderResults() {
     el.onclick = () => focusCard(el.dataset.k, +el.dataset.rank);
   });
 
+  // Marked answer for this question, and where each strategy ranked it.
+  const marked = answers[qkey(res.question)];
+  $("answerBar").innerHTML = marked
+    ? `Marked answer: <b>“${esc(snippet(marked.text, 120))}”</b> · <button class="link" id="clearAns">Clear</button>`
+    : `Which passage answers the question? Click <b>This is the answer</b> on it. For a stricter check, select the exact answer words in a passage first.`;
+  if (marked) $("clearAns").onclick = clearAnswer;
+  const colVerdict = (k) => {
+    if (!marked || !res.answer_rank) return "";
+    const rank = res.answer_rank[k];
+    return rank == null
+      ? `<div class="colverdict missing">⚠ Not in top ${res.results[k].length || 5}</div>`
+      : `<div class="colverdict found">✓ Answer found at rank ${rank}</div>`;
+  };
+
   // Columns
   const maxScore = Math.max(...S.flatMap((k) => res.results[k].map((r) => r.score)), 0.01);
   $("cols").innerHTML = S.map((k) => `
     <div class="col ${k}">
       <h3>${NAMES[k]}</h3>
+      ${colVerdict(k)}
       ${res.results[k].map((r) => card(k, r, maxScore)).join("") || '<div class="empty">No chunks.</div>'}
     </div>`).join("");
 
@@ -473,6 +710,10 @@ function renderResults() {
     t.classList.toggle("open"); b.textContent = t.classList.contains("open") ? "Show less" : "Show all";
   }));
   document.querySelectorAll(".locate").forEach((b) => (b.onclick = () => locate(+b.dataset.start, +b.dataset.end)));
+  document.querySelectorAll(".mark").forEach((b) => {
+    b.onmousedown = (e) => e.preventDefault();  // keep the text selection when clicking
+    b.onclick = () => markAnswer(b.dataset.k, +b.dataset.rank);
+  });
 
   renderDocView();
 }
@@ -530,6 +771,7 @@ function describe(r, withSnippet = false) {
 
 function card(k, r, maxScore) {
   const badges = [];
+  if (r.has_answer) badges.push(`<span class="badge ans">Contains the marked answer</span>`);
   if (r.unique) badges.push(`<span class="badge only">Only ${NAMES[k]} found this</span>`);
   for (const f of r.also_found_by) badges.push(`<span class="badge ${BADGE[f.strategy]}">${NAMES[f.strategy]} #${f.rank}</span>`);
   if (r.end - r.start < 60) badges.push(`<span class="badge trunc" title="Chunks this small are often a lone header with none of the content it introduces.">Very short: ${r.end - r.start} chars</span>`);
@@ -546,7 +788,7 @@ function card(k, r, maxScore) {
     if (startsMid) body = `<span class="cut" title="Cut mid-word">…</span>` + body;
     if (endsMid) body += `<span class="cut" title="Cut mid-word">…</span>`;
   }
-  return `<div class="res ${r.unique ? "unique" : ""}" data-k="${k}" data-rank="${r.rank}" data-start="${r.start}" data-end="${r.end}">
+  return `<div class="res ${r.unique ? "unique" : ""} ${r.has_answer ? "answer" : ""}" data-k="${k}" data-rank="${r.rank}" data-start="${r.start}" data-end="${r.end}">
     <div class="reshead">
       <span class="rank">${r.rank}</span>
       <span class="score" title="${SCORE_TIP}">${r.score.toFixed(3)}</span>
@@ -555,7 +797,7 @@ function card(k, r, maxScore) {
     </div>
     <div class="badges">${badges.join("")}</div>
     <div class="text">${body}</div>
-    <div class="tools"><button class="link more">Show all</button><button class="link locate" data-start="${r.start}" data-end="${r.end}">Show in document</button></div>
+    <div class="tools"><button class="link more">Show all</button><button class="link locate" data-start="${r.start}" data-end="${r.end}">Show in document</button><button class="link mark" data-k="${k}" data-rank="${r.rank}" title="Mark this passage (or the words you've selected in it) as the correct answer to this question">This is the answer</button></div>
   </div>`;
 }
 
