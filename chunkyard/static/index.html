@@ -15,6 +15,7 @@
   --section: #047857; --section-soft: #d7f2e6;
   --shared: #8b8579; --shared-soft: #e9e6df; --all: #57534a; --all-soft: #d6d2c8;
   --warn: #a16207; --warn-soft: #fdf3d3; --bad: #b91c1c; --good: #047857; --good-soft: #d7f2e6;
+  --bad-soft: #fde2e2; --info: #6d28d9; --info-soft: #ede5fd;
   --radius: 10px; --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
   color-scheme: light;
 }
@@ -27,6 +28,7 @@
     --section: #34d399; --section-soft: #123528;
     --shared: #a29e95; --shared-soft: #33312c; --all: #d6d2c8; --all-soft: #45423b;
     --warn: #facc15; --warn-soft: #3a3113; --bad: #f87171; --good: #34d399; --good-soft: #123528;
+    --bad-soft: #3d1a1a; --info: #c4b5fd; --info-soft: #2c2245;
     color-scheme: dark;
   }
 }
@@ -38,6 +40,7 @@
   --section: #34d399; --section-soft: #123528;
   --shared: #a29e95; --shared-soft: #33312c; --all: #d6d2c8; --all-soft: #45423b;
   --warn: #facc15; --warn-soft: #3a3113; --bad: #f87171; --good: #34d399; --good-soft: #123528;
+    --bad-soft: #3d1a1a; --info: #c4b5fd; --info-soft: #2c2245;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -148,6 +151,12 @@ button { font: inherit; }
 .badge.pg { color: var(--paragraph); background: var(--paragraph-soft); }
 .badge.sc { color: var(--section); background: var(--section-soft); }
 .badge.trunc { background: var(--warn-soft); color: var(--warn); }
+.badge.flag { cursor: help; border: 1px solid currentColor; padding: 0 6px; }
+.badge.flag.cut { background: var(--warn-soft); color: var(--warn); }
+.badge.flag.short { background: var(--bad-soft); color: var(--bad); }
+.badge.flag.nums { background: var(--info-soft); color: var(--info); }
+.stat .toosmall { font-size: 12px; line-height: 1.45; color: var(--warn); background: var(--warn-soft); border: 1px solid var(--warn); border-radius: 6px; padding: 6px 8px; margin-top: 8px; }
+.stat .toosmall b { font-weight: 700; }
 .text { font-size: 13.5px; white-space: pre-wrap; word-wrap: break-word; max-height: 9.5em; overflow: hidden; position: relative; color: var(--text); }
 .text.open { max-height: none; }
 .text.clip:not(.open)::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2.2em; background: linear-gradient(transparent, var(--surface)); }
@@ -305,6 +314,17 @@ const DESC = {
 };
 const SCORE_TIP = "How closely this passage matches the meaning of your question. It measures similarity, not truth. A passage can score highly and still be the wrong answer.";
 const BADGE = { fixed: "fx", paragraph: "pg", section: "sc" };
+// Warning flags computed by the server for each retrieved chunk.
+const FLAGS = {
+  starts_mid_sentence: { cls: "cut", label: () => "Starts mid-sentence",
+    tip: "This chunk begins partway through a sentence, so it's missing the words that say what the sentence is about. A model reading it can misunderstand or misquote it." },
+  ends_mid_sentence: { cls: "cut", label: () => "Ends mid-sentence",
+    tip: "The sentence carries on in the next chunk. If the key detail is in the part that was cut off, the model never sees it." },
+  short: { cls: "short", label: (r) => `Short: ${r.end - r.start} chars`,
+    tip: "Under 100 characters. Chunks this small are usually a lone heading or a sentence fragment, without the context needed to answer a question. They can still score highly because they match the question's wording." },
+  unlabeled_numbers: { cls: "nums", label: () => "Numbers without labels",
+    tip: "Contains numbers whose labels, such as a table's column headings or what the row measures, aren't in this chunk. The model sees values like -59 -50 -46 without knowing what they mean, and may report them as the wrong thing." },
+};
 let SAMPLES = [];  // built-in samples from the server, each with suggested questions
 
 const $ = (id) => document.getElementById(id);
@@ -432,6 +452,8 @@ function renderDoc() {
       <div class="num">${st.count} <span class="sub">chunks</span></div>
       <div class="sub">avg ${st.avg_chars} chars · ${st.min_chars}–${st.max_chars}</div>
       ${st.truncated ? `<div class="warn">${st.truncated} chunk${st.truncated > 1 ? "s" : ""} too long for the model (end ignored)</div>` : ""}
+      ${st.too_small === "avg" ? `<div class="toosmall"><b>⚠ Fragments.</b> Chunks average only ${st.avg_chars} characters (smallest: ${st.min_chars}). This strategy is producing fragments too small to be useful on this document. Most of them can't answer a question on their own.</div>`
+        : st.too_small === "min" ? `<div class="toosmall"><b>⚠ Some fragments.</b> The average chunk is ${st.avg_chars} characters, but the smallest is only ${st.min_chars}. This strategy is producing some fragments too small to be useful on this document.</div>` : ""}
       <div class="strip" title="Where each chunk starts in the document">${ticks}</div>
       <div class="explain">${DESC[k]}</div>
     </div>`;
@@ -774,7 +796,10 @@ function card(k, r, maxScore) {
   if (r.has_answer) badges.push(`<span class="badge ans">Contains the marked answer</span>`);
   if (r.unique) badges.push(`<span class="badge only">Only ${NAMES[k]} found this</span>`);
   for (const f of r.also_found_by) badges.push(`<span class="badge ${BADGE[f.strategy]}">${NAMES[f.strategy]} #${f.rank}</span>`);
-  if (r.end - r.start < 60) badges.push(`<span class="badge trunc" title="Chunks this small are often a lone header with none of the content it introduces.">Very short: ${r.end - r.start} chars</span>`);
+  for (const f of r.flags || []) {
+    const def = FLAGS[f];
+    if (def) badges.push(`<span class="badge flag ${def.cls}" title="${esc(def.tip)}">${def.label(r)}</span>`);
+  }
   if (r.truncated) badges.push(`<span class="badge trunc" title="The embedding model only reads the first ${res.max_tokens} tokens, so the rest of this chunk didn't affect its score.">${r.tokens} tokens: model saw only ${res.max_tokens}</span>`);
 
   let body = esc(r.text);

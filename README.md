@@ -64,9 +64,19 @@ section-aware chunking shines.
   block on the map to jump to its card.
 - **Show in document**: the full text with retrieved passages highlighted by
   which strategies retrieved them.
-- **Badges**: *Very short* flags tiny chunks (usually a lone header). *Model
-  saw only 256 tokens* means the chunk is longer than the embedding model
-  reads, so the end of it didn't affect its score.
+- **Warning flags** on retrieved chunks (hover any badge for why it matters):
+  - *Starts mid-sentence* / *Ends mid-sentence* (yellow): the chunk is cut
+    partway through a sentence. Bullets, headings, and paragraph breaks don't
+    count.
+  - *Short* (red): under 100 characters, usually a lone heading or fragment.
+  - *Numbers without labels* (violet): a line of values, like a table row
+    ("(n = 562) -59 -50 -46 -34"), with no column heading in the few lines
+    above it in the same chunk.
+  - *Model saw only 256 tokens*: the chunk is longer than the embedding model
+    reads, so the end of it didn't affect its score.
+- **Fragments warning** on a strategy's card: its chunks average under 200
+  characters, or its smallest is under 30, so it's producing fragments too
+  small to be useful on this document.
 
 ## Scoring: which strategy was right?
 

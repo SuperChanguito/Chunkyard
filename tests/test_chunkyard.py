@@ -299,3 +299,55 @@ def test_evaluate_summary(sample_text):
         assert summ["found"] == len(ranks) and summ["total"] == 3
         assert summ["avg_rank"] == (round(sum(ranks) / len(ranks), 2) if ranks else None)
     assert doc.fingerprint and len(doc.fingerprint) == 16
+
+
+# --- warning flags ------------------------------------------------------------
+
+def test_mid_sentence_flags():
+    from chunkyard.flags import ends_mid_sentence, starts_mid_sentence
+    t = "First sentence here. Second sentence goes on for a while.\n\n## Heading\n\nBody text."
+    second = t.index("Second")
+    assert not starts_mid_sentence(t, 0)
+    assert not starts_mid_sentence(t, second)                    # after ". "
+    assert starts_mid_sentence(t, t.index("goes"))               # inside a sentence
+    assert starts_mid_sentence(t, t.index("cond"))               # inside a word
+    assert not starts_mid_sentence(t, t.index("## Heading"))     # after a blank line
+    assert not ends_mid_sentence(t, t.index(" Second"))          # ends with "."
+    assert ends_mid_sentence(t, t.index(" for a while"))         # stops mid-sentence
+    assert not ends_mid_sentence(t, t.index("Heading") + 7)      # heading, then blank line
+    assert not ends_mid_sentence(t, len(t))
+
+
+def test_pdf_style_lines_are_not_mid_sentence():
+    from chunkyard.flags import starts_mid_sentence
+    t = "If a dose is missed:\n• Within 7 days, take it.\n• After 7 days, skip it."
+    assert not starts_mid_sentence(t, t.index("• Within"))       # bullet after a colon
+    assert not starts_mid_sentence(t, t.index("• After"))
+
+
+def test_unlabeled_numbers():
+    from chunkyard.flags import unlabeled_numbers
+    assert unlabeled_numbers("REPATHA 420 mg once monthly\n(n = 562) -59 -50 -46 -34")
+    assert unlabeled_numbers("Diarrhea 2.6 3.0\n\nGastroenteritis 2.0 3.0")
+    assert not unlabeled_numbers("Minimum trail weight is 1.62 kg, which counts the poles.")
+    assert not unlabeled_numbers("Give 140 mg every 2 weeks or 420 mg once monthly.")
+    # A column header just above the numbers counts as their label.
+    assert not unlabeled_numbers("Treatment Group LDL-C Apo B Total Cholesterol\nPlacebo 8 8 2 5")
+
+
+def test_chunk_flags_and_strategy_size():
+    from chunkyard.flags import SHORT, chunk_flags, too_small
+    t = "## Warranty\n\nCoverage lasts two years."
+    assert chunk_flags(t, 0, len("## Warranty")) == [SHORT]
+    assert too_small(130, 8) == "avg" and too_small(150, 40) == "avg"
+    assert too_small(574, 24) == "min"          # fine on average, but has tiny fragments
+    assert too_small(314, 207) is None
+
+
+def test_query_results_carry_flags(sample_text):
+    store = Store(FakeEmbedder())
+    doc = store.add("s", sample_text, 500, 100, 1200)
+    res = query(store, doc.id, "warranty coverage", 5)
+    assert all(isinstance(r["flags"], list) for rs in res["results"].values() for r in rs)
+    assert any("starts_mid_sentence" in r["flags"] or "ends_mid_sentence" in r["flags"]
+               for r in res["results"]["fixed"])

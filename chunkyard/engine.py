@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .chunking import STRATEGIES, Chunk, chunk_all, split_sections
+from .flags import chunk_flags
 
 MODEL_NAME = os.environ.get("CHUNKYARD_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 MAX_DOCS = 5          # documents kept in memory
@@ -181,6 +182,7 @@ def query(store: Store, doc_id: str, question: str, k: int = 5,
             "truncated": doc.tokens[s][i] > max_tokens,
             "section": doc.section_at(doc.chunks[s][i].start),
             "section_end": doc.section_at(doc.chunks[s][i].end - 1),
+            "flags": chunk_flags(doc.text, doc.chunks[s][i].start, doc.chunks[s][i].end),
         } for r, i in enumerate(top)]
 
     # Which other strategies retrieved an overlapping passage, and at what rank?
