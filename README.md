@@ -68,6 +68,34 @@ section-aware chunking shines.
   saw only 256 tokens* means the chunk is longer than the embedding model
   reads, so the end of it didn't affect its score.
 
+## Scoring: which strategy was right?
+
+1. Ask a question and click **This is the answer** on the passage that
+   answers it. For a stricter check, first select the exact answer words
+   inside a passage (e.g. "two years from the date of purchase"); then only
+   those words count as the answer.
+2. Each column now says **Answer found at rank N** or **Not in top 5**.
+3. Repeat for a few questions. Section 4 lists them. **Save to file** writes
+   them to a JSON file; **Load from file** brings them back.
+4. **Run saved set** runs every saved question against all three strategies
+   and shows, for each strategy, how many answers were found in the top 5 and
+   their average rank, plus a per-question breakdown.
+
+How "found" is decided: the marked answer is stored as a span of the
+document text, not as a chunk, so the same answers can score all three
+strategies at any chunk size. A retrieved chunk counts as containing the
+answer if it covers **at least half** of that span. A heading that sits next
+to the answer covers none of it and doesn't count.
+
+Answer sets are tied to the exact document text (a fingerprint is saved in
+the file), so a set made for one document can't be applied to another.
+Change the chunk sizes in section 1 and run the set again to compare settings.
+
+Current limitation: each question has one accepted answer location. If the
+same answer appears in several places (an FDA label repeats dosing in its
+highlights, full text, and patient leaflet), a strategy that retrieves a
+different copy is scored as a miss.
+
 ## Files and limits
 
 - `.txt`, `.md`, and `.pdf` up to 20 MB. Scanned PDFs without a text layer

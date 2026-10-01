@@ -246,3 +246,56 @@ def test_sample_registry_files_and_questions():
         assert len(spec["questions"]) >= 3
     fda = " ".join(SAMPLES["fda"]["questions"]).lower()
     assert "dose" in fda and "used to treat" in fda
+
+
+# --- scoring against a marked answer -----------------------------------------
+
+def test_contains_answer_rule():
+    from chunkyard.engine import contains_answer
+    answer = (100, 140)                            # e.g. "two years from the date of purchase"
+    assert contains_answer((0, 500), answer)       # big chunk holding it
+    assert contains_answer((110, 300), answer)     # covers 75% of it
+    assert not contains_answer((125, 300), answer)  # covers only 37.5%
+    assert not contains_answer((80, 99), answer)   # a heading just before it
+
+
+def test_header_only_chunk_does_not_count_as_answer(sample_text):
+    from chunkyard.engine import answer_rank
+    start = sample_text.index("Coverage lasts for two years")
+    answer = (start, start + len("Coverage lasts for two years from the date of purchase"))
+    store = Store(FakeEmbedder())
+    doc = store.add("s", sample_text, 500, 100, 1200)
+    header = next(c for c in doc.chunks["paragraph"] if c.text == "## Warranty")
+    fake = [{"rank": 1, "start": header.start, "end": header.end}]
+    assert answer_rank(fake, answer) is None
+
+
+def test_query_reports_answer_rank(sample_text):
+    store = Store(FakeEmbedder())
+    doc = store.add("s", sample_text, 500, 100, 1200)
+    start = sample_text.index("Coverage lasts for two years")
+    res = query(store, doc.id, "coverage two years receipt", 5, (start, start + 40))
+    assert set(res["answer_rank"]) == {"fixed", "paragraph", "section"}
+    for s, rank in res["answer_rank"].items():
+        hits = [r["rank"] for r in res["results"][s] if r["has_answer"]]
+        assert rank == (hits[0] if hits else None)
+    assert "answer_rank" not in query(store, doc.id, "coverage two years receipt")
+
+
+def test_evaluate_summary(sample_text):
+    from chunkyard.engine import evaluate
+    store = Store(FakeEmbedder())
+    doc = store.add("s", sample_text, 500, 100, 1200)
+    def span(phrase):
+        i = sample_text.index(phrase)
+        return (i, i + len(phrase))
+    items = [("coverage two years receipt", span("Coverage lasts for two years")),
+             ("zippers sticking pliers", span("squeezed gently with pliers")),
+             ("nothing relevant xyzzy", span("Peak interior height is 102 cm"))]
+    out = evaluate(store, doc.id, items, k=5)
+    assert len(out["rows"]) == 3
+    for s, summ in out["summary"].items():
+        ranks = [r["ranks"][s] for r in out["rows"] if r["ranks"][s] is not None]
+        assert summ["found"] == len(ranks) and summ["total"] == 3
+        assert summ["avg_rank"] == (round(sum(ranks) / len(ranks), 2) if ranks else None)
+    assert doc.fingerprint and len(doc.fingerprint) == 16

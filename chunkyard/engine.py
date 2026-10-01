@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import bisect
+import hashlib
 import os
 import threading
 import uuid
@@ -16,6 +17,7 @@ from .chunking import STRATEGIES, Chunk, chunk_all, split_sections
 MODEL_NAME = os.environ.get("CHUNKYARD_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 MAX_DOCS = 5          # documents kept in memory
 AGREE_RATIO = 0.25    # spans "agree" if they share >= 25% of the shorter one
+ANSWER_COVERAGE = 0.5  # a chunk "contains the answer" if it covers >= half of it
 
 
 class Embedder:
@@ -74,6 +76,7 @@ class IndexedDoc:
     tokens: dict[str, list[int]]
     section_starts: list[int]        # where each detected section begins
     section_paths: list[list[str]]   # and its heading breadcrumb
+    fingerprint: str = ""            # hash of the text; marked answers are tied to it
 
     def section_at(self, pos: int) -> list[str]:
         """Heading breadcrumb of the section containing character `pos`."""
@@ -101,7 +104,8 @@ class Store:
         doc = IndexedDoc(uuid.uuid4().hex[:12], name, text,
                          {"size": size, "overlap": overlap, "max_chars": max_chars},
                          chunks, vectors, tokens,
-                         [s for s, _ in sections], [p for _, p in sections])
+                         [s for s, _ in sections], [p for _, p in sections],
+                         fingerprint(text))
         with self._lock:
             self.docs[doc.id] = doc
             while len(self.docs) > MAX_DOCS:
@@ -119,6 +123,10 @@ class Store:
 # Querying and comparison
 # ---------------------------------------------------------------------------
 
+def fingerprint(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
 def overlap_ratio(a: tuple[int, int], b: tuple[int, int]) -> float:
     inter = min(a[1], b[1]) - max(a[0], b[0])
     if inter <= 0:
@@ -133,7 +141,23 @@ def _coverage(spans: list[tuple[int, int]], n: int) -> np.ndarray:
     return mask
 
 
-def query(store: Store, doc_id: str, question: str, k: int = 5) -> dict:
+def contains_answer(chunk: tuple[int, int], answer: tuple[int, int]) -> bool:
+    """True if the chunk covers at least half of the marked answer span.
+
+    Measured against the answer, not the chunk: a lone heading next to the
+    answer covers none of it, while a big section that holds it covers all.
+    """
+    inter = min(chunk[1], answer[1]) - max(chunk[0], answer[0])
+    return inter > 0 and inter / max(1, answer[1] - answer[0]) >= ANSWER_COVERAGE
+
+
+def answer_rank(results: list[dict], answer: tuple[int, int]) -> int | None:
+    """Rank of the first retrieved chunk containing the answer, or None."""
+    return next((r["rank"] for r in results if contains_answer((r["start"], r["end"]), answer)), None)
+
+
+def query(store: Store, doc_id: str, question: str, k: int = 5,
+          answer: tuple[int, int] | None = None) -> dict:
     doc = store.get(doc_id)
     qv = store.embedder.encode([question])[0]
     max_tokens = store.embedder.max_tokens
@@ -187,10 +211,37 @@ def query(store: Store, doc_id: str, question: str, k: int = 5) -> dict:
                 (results[b][0]["start"], results[b][0]["end"])) >= AGREE_RATIO)
             pairs.append({"a": a, "b": b, "top1_agree": top1, "overlap": round(jac, 3)})
 
-    return {
+    out = {
         "question": question,
         "results": results,
         "pairs": pairs,
         "top1_all_agree": all(p["top1_agree"] for p in pairs),
         "max_tokens": max_tokens,
     }
+    if answer is not None:
+        for s in STRATEGIES:
+            for res in results[s]:
+                res["has_answer"] = contains_answer((res["start"], res["end"]), answer)
+        out["answer_rank"] = {s: answer_rank(results[s], answer) for s in STRATEGIES}
+    return out
+
+
+def evaluate(store: Store, doc_id: str, items: list[tuple[str, tuple[int, int]]], k: int = 5) -> dict:
+    """Run every (question, answer span) pair and score each strategy.
+
+    For each strategy: how many answers were found in the top k, and the
+    average rank of the ones that were found.
+    """
+    rows = []
+    for question, answer in items:
+        res = query(store, doc_id, question, k, answer)
+        rows.append({"question": question, "ranks": res["answer_rank"]})
+    summary = {}
+    for s in STRATEGIES:
+        found = [r["ranks"][s] for r in rows if r["ranks"][s] is not None]
+        summary[s] = {
+            "found": len(found),
+            "total": len(rows),
+            "avg_rank": round(sum(found) / len(found), 2) if found else None,
+        }
+    return {"k": k, "rows": rows, "summary": summary}
