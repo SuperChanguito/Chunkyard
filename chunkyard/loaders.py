@@ -2,17 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import re
 import statistics
+import threading
+import unicodedata
+from collections import OrderedDict
 
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".rst", ".text"}
+NOT_TEXT = "This doesn't look like a text file. Upload a .txt, .md, or .pdf."
+
+# Parsed PDF text by file hash, so re-chunking a PDF doesn't re-parse it.
+_PDF_CACHE: OrderedDict[str, str] = OrderedDict()
+_PDF_CACHE_SIZE = 8
+_pdf_lock = threading.Lock()
 
 
 def load_document(filename: str, data: bytes) -> str:
     name = filename.lower()
     if name.endswith(".pdf"):
-        text = _pdf_text(data)
+        text = _cached_pdf_text(data)
     elif any(name.endswith(ext) for ext in TEXT_EXTENSIONS) or "." not in name:
         text = _decode(data)
     else:
@@ -24,12 +34,40 @@ def load_document(filename: str, data: bytes) -> str:
 
 
 def _decode(data: bytes) -> str:
-    for enc in ("utf-8-sig", "utf-16", "cp1252"):
+    """Bytes to text: UTF-8, UTF-16 only when it has a byte-order mark, then
+    Windows-1252, then UTF-8 with replacement characters.
+
+    Trying UTF-16 without a BOM would "succeed" on any even-length file and
+    turn ordinary Windows text into CJK garbage, so it isn't guessed.
+    """
+    text = None
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
         try:
-            return data.decode(enc)
+            text = data.decode("utf-16")
         except UnicodeDecodeError:
-            continue
-    return data.decode("utf-8", errors="replace")
+            text = None
+    if text is None:
+        for enc in ("utf-8-sig", "cp1252"):
+            try:
+                text = data.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+    if text is None:
+        text = data.decode("utf-8", errors="replace")
+    if not looks_like_text(text):
+        raise ValueError(NOT_TEXT)
+    return text
+
+
+def looks_like_text(text: str) -> bool:
+    """False when more than 5% of characters are control or replacement
+    characters, as with a binary file renamed to .txt."""
+    if not text:
+        return True
+    bad = sum(1 for c in text
+              if c == "�" or (unicodedata.category(c) == "Cc" and c not in "\n\r\t\f\v"))
+    return bad / len(text) <= 0.05
 
 
 def normalize(text: str) -> str:
@@ -37,6 +75,20 @@ def normalize(text: str) -> str:
     text = re.sub(r"[  ]+\n", "\n", text)       # trailing spaces
     text = re.sub(r"\n{3,}", "\n\n", text)            # runs of blank lines
     return text.strip() + "\n"
+
+
+def _cached_pdf_text(data: bytes) -> str:
+    key = hashlib.sha256(data).hexdigest()
+    with _pdf_lock:
+        if key in _PDF_CACHE:
+            _PDF_CACHE.move_to_end(key)
+            return _PDF_CACHE[key]
+    text = _pdf_text(data)
+    with _pdf_lock:
+        _PDF_CACHE[key] = text
+        while len(_PDF_CACHE) > _PDF_CACHE_SIZE:
+            _PDF_CACHE.popitem(last=False)
+    return text
 
 
 def _pdf_text(data: bytes) -> str:
@@ -50,8 +102,36 @@ def pages_to_text(pages: list[str]) -> str:
     """Clean up per-page text extracted from a PDF into one document."""
     pages = strip_running_lines(pages)
     text = "\n\n".join(p.strip() for p in pages if p.strip())
-    text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)  # re-join hyphenated line breaks
+    text = rejoin_hyphens(text)
     return infer_paragraphs(text)
+
+
+_LINE_HYPHEN = re.compile(r"(\w+)-\n(\w+)")
+
+
+def rejoin_hyphens(text: str) -> str:
+    """Undo hyphens that a PDF put at a line break.
+
+    "subcuta-\nneous" becomes "subcutaneous". The hyphen is kept ("Non-HDL",
+    "patient-safety") when either part isn't all lowercase letters, or when
+    the document itself shows it's a compound: the hyphenated form appears
+    elsewhere, or both parts are words on their own and the joined word isn't.
+    """
+    # Words used elsewhere in the document (the split fragments themselves don't count).
+    words = set(re.findall(r"[a-z]+", _LINE_HYPHEN.sub(" ", text).lower()))
+    flat = text.replace("-\n", "-").lower()
+
+    def fix(m: re.Match) -> str:
+        left, right = m.group(1), m.group(2)
+        lowercase = left.isalpha() and right.isalpha() and left.islower() and right.islower()
+        joined = (left + right).lower()
+        compound = (
+            not lowercase
+            or flat.count(f"{left}-{right}".lower()) > 1
+            or (joined not in words and left.lower() in words and right.lower() in words))
+        return f"{left}-{right}" if compound else left + right
+
+    return _LINE_HYPHEN.sub(fix, text)
 
 
 def strip_running_lines(pages: list[str], edge: int = 3) -> list[str]:

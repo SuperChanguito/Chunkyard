@@ -1,0 +1,11 @@
+{
+  "name": "chunkyard-ui-checks",
+  "private": true,
+  "description": "Browser regression checks for Chunkyard's page (see qa_ui_check.js).",
+  "scripts": {
+    "check": "node qa_ui_check.js"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.12.0"
+  }
+}

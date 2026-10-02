@@ -5,6 +5,7 @@ from __future__ import annotations
 import bisect
 import hashlib
 import os
+import re
 import threading
 import uuid
 from collections import OrderedDict
@@ -12,12 +13,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .chunking import STRATEGIES, Chunk, chunk_all, split_sections
-from .flags import chunk_flags
+from .chunking import STRATEGIES, Chunk, chunk_all, detect_header, split_sections
+from .flags import SHORT_CHARS, chunk_flags
 
 MODEL_NAME = os.environ.get("CHUNKYARD_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 MAX_DOCS = 5          # documents kept in memory
-AGREE_RATIO = 0.25    # spans "agree" if they share >= 25% of the shorter one
+EMBED_CACHE_SIZE = 50_000  # chunk embeddings kept (about 1.5 KB each)
+AGREE_RATIO = 0.25    # two chunks "agree" if they share >= 25% of the LONGER one
+FRAGMENT_INSIDE = 0.5  # a fragment sits "inside" a passage if half of it is covered
 ANSWER_COVERAGE = 0.5  # a chunk "contains the answer" if it covers >= half of it
 
 
@@ -90,14 +93,40 @@ class Store:
         self.embedder = embedder
         self.docs: OrderedDict[str, IndexedDoc] = OrderedDict()
         self._lock = threading.Lock()
+        # (model, exact chunk text) -> (vector, token count). Re-chunking only
+        # embeds chunks it hasn't seen: changing just the fixed size leaves
+        # every paragraph and section chunk cached.
+        self._cache: OrderedDict[tuple[str, str], tuple[np.ndarray, int]] = OrderedDict()
+        self.embedded = 0  # texts actually sent to the model (for tests and curiosity)
+
+    def _embed(self, texts: list[str]) -> tuple[np.ndarray, list[int]]:
+        model = self.embedder.name
+        with self._lock:
+            missing = list(dict.fromkeys(t for t in texts if (model, t) not in self._cache))
+        fresh: dict[str, tuple[np.ndarray, int]] = {}
+        if missing:
+            vecs = self.embedder.encode(missing)
+            counts = self.embedder.token_counts(missing)
+            fresh = {t: (v, n) for t, v, n in zip(missing, vecs, counts)}
+        with self._lock:
+            self.embedded += len(missing)
+            rows = []
+            for t in texts:
+                hit = fresh.get(t) or self._cache.get((model, t))
+                self._cache[(model, t)] = hit
+                self._cache.move_to_end((model, t))
+                rows.append(hit)
+            while len(self._cache) > EMBED_CACHE_SIZE:
+                self._cache.popitem(last=False)
+        if not rows:
+            return np.zeros((0, 0), dtype=np.float32), []
+        return np.stack([r[0] for r in rows]), [r[1] for r in rows]
 
     def add(self, name: str, text: str, size: int, overlap: int, max_chars: int) -> IndexedDoc:
         chunks = chunk_all(text, size, overlap, max_chars)
         vectors, tokens = {}, {}
         for s in STRATEGIES:
-            texts = [c.text for c in chunks[s]] or [""]
-            vectors[s] = self.embedder.encode(texts)[: len(chunks[s])]
-            tokens[s] = self.embedder.token_counts(texts)[: len(chunks[s])]
+            vectors[s], tokens[s] = self._embed([c.text for c in chunks[s]])
         # Section locations let the UI say *where* each strategy's hit came
         # from ("2.1 Recommended Dosage"), whichever strategy produced it.
         sections = [((sec.header_span or sec.body_spans[0])[0], sec.path)
@@ -129,10 +158,43 @@ def fingerprint(text: str) -> str:
 
 
 def overlap_ratio(a: tuple[int, int], b: tuple[int, int]) -> float:
+    """Shared characters as a fraction of the LONGER span.
+
+    Measuring against the longer span means a lone heading sitting inside a
+    big passage shares almost nothing with it, rather than 100%.
+    """
     inter = min(a[1], b[1]) - max(a[0], b[0])
     if inter <= 0:
         return 0.0
-    return inter / max(1, min(a[1] - a[0], b[1] - b[0]))
+    return inter / max(1, a[1] - a[0], b[1] - b[0])
+
+
+def same_passage(a: tuple[int, int], b: tuple[int, int]) -> bool:
+    """Do two chunks from different strategies point at the same passage?
+
+    Never for a chunk under SHORT_CHARS: a heading or fragment that happens to
+    sit inside another strategy's passage didn't retrieve that passage.
+    """
+    if min(a[1] - a[0], b[1] - b[0]) < SHORT_CHARS:
+        return False
+    return overlap_ratio(a, b) >= AGREE_RATIO
+
+
+def _fragment_inside(fragment: tuple[int, int], passage: tuple[int, int]) -> bool:
+    inter = min(fragment[1], passage[1]) - max(fragment[0], passage[0])
+    return inter > 0 and inter / max(1, fragment[1] - fragment[0]) >= FRAGMENT_INSIDE
+
+
+def _heading_title(doc: "IndexedDoc", start: int, text: str) -> str | None:
+    """If a short chunk is just a heading, its title ("What's not covered")."""
+    line = text.strip()
+    if "\n" in line:
+        return None
+    title = re.sub(r"^#{1,6}\s+", "", line).strip()
+    if (line.startswith("#") or title in doc.section_at(start)
+            or detect_header(line, "", True) is not None):
+        return title
+    return None
 
 
 def _coverage(spans: list[tuple[int, int]], n: int) -> np.ndarray:
@@ -185,18 +247,22 @@ def query(store: Store, doc_id: str, question: str, k: int = 5,
             "flags": chunk_flags(doc.text, doc.chunks[s][i].start, doc.chunks[s][i].end),
         } for r, i in enumerate(top)]
 
-    # Which other strategies retrieved an overlapping passage, and at what rank?
+    # Which other strategies retrieved the same passage, and at what rank?
+    # `matches` lists every agreeing card (the UI links them on hover), so the
+    # browser never needs its own copy of the rule.
     for s in STRATEGIES:
         for res in results[s]:
-            found = []
+            found, matches = [], []
             for t in STRATEGIES:
                 if t == s:
                     continue
                 ranks = [o["rank"] for o in results[t]
-                         if overlap_ratio((res["start"], res["end"]), (o["start"], o["end"])) >= AGREE_RATIO]
+                         if same_passage((res["start"], res["end"]), (o["start"], o["end"]))]
                 if ranks:
                     found.append({"strategy": t, "rank": min(ranks)})
+                    matches.extend({"strategy": t, "rank": r} for r in ranks)
             res["also_found_by"] = found
+            res["matches"] = matches
             res["unique"] = not found
 
     # Pairwise agreement: does the #1 hit point at the same passage, and how
@@ -208,16 +274,36 @@ def query(store: Store, doc_id: str, question: str, k: int = 5,
         for b in STRATEGIES[i + 1:]:
             union = int((cover[a] | cover[b]).sum())
             jac = int((cover[a] & cover[b]).sum()) / union if union else 0.0
-            top1 = bool(results[a] and results[b] and overlap_ratio(
+            top1 = bool(results[a] and results[b] and same_passage(
                 (results[a][0]["start"], results[a][0]["end"]),
-                (results[b][0]["start"], results[b][0]["end"])) >= AGREE_RATIO)
+                (results[b][0]["start"], results[b][0]["end"])))
             pairs.append({"a": a, "b": b, "top1_agree": top1, "overlap": round(jac, 3)})
+
+    # A strategy whose #1 is a tiny fragment: say what it is and whether it
+    # sits inside another strategy's #1 passage ("only retrieved the heading").
+    fragments = []
+    for s in STRATEGIES:
+        if not results[s]:
+            continue
+        top = results[s][0]
+        if top["end"] - top["start"] >= SHORT_CHARS:
+            continue
+        span = (top["start"], top["end"])
+        fragments.append({
+            "strategy": s,
+            "text": doc.text[top["start"]:top["end"]].strip(),
+            "heading": _heading_title(doc, top["start"], doc.text[top["start"]:top["end"]]),
+            "inside": [t for t in STRATEGIES if t != s and results[t]
+                       and results[t][0]["end"] - results[t][0]["start"] >= SHORT_CHARS
+                       and _fragment_inside(span, (results[t][0]["start"], results[t][0]["end"]))],
+        })
 
     out = {
         "question": question,
         "results": results,
         "pairs": pairs,
         "top1_all_agree": all(p["top1_agree"] for p in pairs),
+        "top1_fragments": fragments,
         "max_tokens": max_tokens,
     }
     if answer is not None:
@@ -231,8 +317,9 @@ def query(store: Store, doc_id: str, question: str, k: int = 5,
 def evaluate(store: Store, doc_id: str, items: list[tuple[str, tuple[int, int]]], k: int = 5) -> dict:
     """Run every (question, answer span) pair and score each strategy.
 
-    For each strategy: how many answers were found in the top k, and the
-    average rank of the ones that were found.
+    For each strategy: how many answers were found in the top k, the average
+    rank of the ones that were found, and MRR (mean of 1/rank, 0 for a miss),
+    one number that reflects both hits and misses.
     """
     rows = []
     for question, answer in items:
@@ -245,5 +332,6 @@ def evaluate(store: Store, doc_id: str, items: list[tuple[str, tuple[int, int]]]
             "found": len(found),
             "total": len(rows),
             "avg_rank": round(sum(found) / len(found), 2) if found else None,
+            "mrr": round(sum(1 / r for r in found) / len(rows), 3) if rows else None,
         }
     return {"k": k, "rows": rows, "summary": summary}

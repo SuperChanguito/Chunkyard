@@ -8,13 +8,13 @@
 <style>
 :root {
   --bg: #f6f5f2; --surface: #ffffff; --surface-2: #f0efeb; --border: #e2e0da;
-  --text: #1c1b19; --muted: #6b6860; --faint: #9a968c;
+  --text: #1c1b19; --muted: #6b6860; --faint: #78756d;
   --accent: #1c1b19; --accent-text: #ffffff;
-  --fixed: #c2410c; --fixed-soft: #fdebdd;
+  --fixed: #be400c; --fixed-soft: #fdebdd;
   --paragraph: #1d4ed8; --paragraph-soft: #dfe8fd;
   --section: #047857; --section-soft: #d7f2e6;
   --shared: #8b8579; --shared-soft: #e9e6df; --all: #57534a; --all-soft: #d6d2c8;
-  --warn: #a16207; --warn-soft: #fdf3d3; --bad: #b91c1c; --good: #047857; --good-soft: #d7f2e6;
+  --warn: #9c5f07; --warn-soft: #fdf3d3; --bad: #b91c1c; --good: #047857; --good-soft: #d7f2e6;
   --bad-soft: #fde2e2; --info: #6d28d9; --info-soft: #ede5fd;
   --radius: 10px; --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
   color-scheme: light;
@@ -22,7 +22,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #161513; --surface: #1f1e1b; --surface-2: #282724; --border: #35332f;
-    --text: #ecebe7; --muted: #a29e95; --faint: #75716a;
+    --text: #ecebe7; --muted: #a29e95; --faint: #8a8680;
     --accent: #ecebe7; --accent-text: #161513;
     --fixed: #fb923c; --fixed-soft: #3d2516; --paragraph: #7aa2ff; --paragraph-soft: #1d2847;
     --section: #34d399; --section-soft: #123528;
@@ -34,7 +34,7 @@
 }
 :root[data-theme="dark"] {
   --bg: #161513; --surface: #1f1e1b; --surface-2: #282724; --border: #35332f;
-  --text: #ecebe7; --muted: #a29e95; --faint: #75716a;
+  --text: #ecebe7; --muted: #a29e95; --faint: #8a8680;
   --accent: #ecebe7; --accent-text: #161513;
   --fixed: #fb923c; --fixed-soft: #3d2516; --paragraph: #7aa2ff; --paragraph-soft: #1d2847;
   --section: #34d399; --section-soft: #123528;
@@ -105,6 +105,7 @@ button { font: inherit; }
 .examples { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .chip { font-size: 13px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: 99px; padding: 3px 10px; cursor: pointer; }
 .chip:hover { border-color: var(--text); }
+.chip:disabled, .qlink:disabled { opacity: .5; cursor: progress; }
 
 .summary { margin: 16px 0 10px; }
 .verdict { margin-bottom: 10px; }
@@ -362,11 +363,6 @@ let SAMPLES = [];  // built-in samples from the server, each with suggested ques
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const AGREE = 0.25;
-const overlap = (a, b) => {
-  const inter = Math.min(a.end, b.end) - Math.max(a.start, b.start);
-  return inter <= 0 ? 0 : inter / Math.max(1, Math.min(a.end - a.start, b.end - b.start));
-};
 
 let doc = null;          // current document summary from the server
 let lastSource = null;   // {kind: "file", file} | {kind: "sample", id}
@@ -433,7 +429,13 @@ async function index(source) {
   else fd.append("sample", source.id);
   $("uploadErr").classList.add("hidden");
   $("docInfo").className = "busy";
-  $("docInfo").textContent = modelReady ? "Chunking and embedding…" : "Chunking and embedding (waiting for the model to finish loading first)…";
+  const began = Date.now();
+  const tick = () => {
+    const secs = Math.floor((Date.now() - began) / 1000);
+    $("docInfo").textContent = (modelReady ? "Chunking and embedding…" : "Chunking and embedding (waiting for the model to finish loading first)…") + ` ${secs}s`;
+  };
+  tick();
+  const timer = setInterval(tick, 1000);
   setBusy(true);
   try {
     const r = await fetch(url, { method: "POST", body: fd });
@@ -456,7 +458,7 @@ async function index(source) {
     $("docInfo").className = "empty";
     $("docInfo").textContent = doc ? "" : "No document yet. Upload a file or try the sample.";
     if (doc) renderDoc();
-  } finally { setBusy(false); }
+  } finally { clearInterval(timer); setBusy(false); }
 }
 
 function setBusy(b) {
@@ -485,7 +487,7 @@ function renderDoc() {
     h += `<div class="stat ${k}" style="--c:var(--${k})">
       <div class="name">${NAMES[k]}</div>
       <div class="num">${st.count} <span class="sub">chunks</span></div>
-      <div class="sub">avg ${st.avg_chars} chars · ${st.min_chars}–${st.max_chars}</div>
+      <div class="sub" title="Characters of the document each chunk covers${k === "section" ? ". Section chunks also carry their heading path when embedded." : "."}">avg ${st.avg_chars} source chars · ${st.min_chars}–${st.max_chars}</div>
       ${st.truncated ? `<div class="warn">${st.truncated} chunk${st.truncated > 1 ? "s" : ""} too long for the model (end ignored)</div>` : ""}
       ${st.too_small === "avg" ? `<div class="toosmall"><b>⚠ Fragments.</b> Chunks average only ${st.avg_chars} characters (smallest: ${st.min_chars}). This strategy is producing fragments too small to be useful on this document. Most of them can't answer a question on their own.</div>`
         : st.too_small === "min" ? `<div class="toosmall"><b>⚠ Some fragments.</b> The average chunk is ${st.avg_chars} characters, but the smallest is only ${st.min_chars}. This strategy is producing some fragments too small to be useful on this document.</div>` : ""}
@@ -524,23 +526,31 @@ function persistAnswers() {
   renderSet();
 }
 
+// The answer is the exact words the viewer selects, never a whole chunk: a
+// whole-chunk answer would only ever be credited to the strategy it came from.
+function maxAnswerChars() { return Math.floor(doc.settings.size / 2); }
+
 function markAnswer(k, rank) {
   const r = res.results[k].find((x) => x.rank === rank);
   const cardEl = document.querySelector(`.res[data-k="${k}"][data-rank="${rank}"]`);
-  let start = r.start, end = r.end;
-  // If the viewer selected words inside this chunk, the answer is just those words.
   const sel = window.getSelection();
-  if (sel && !sel.isCollapsed && cardEl.contains(sel.anchorNode) && cardEl.contains(sel.focusNode)) {
-    const picked = sel.toString().trim();
-    if (picked.length >= 3) {
-      const i = doc.text.indexOf(picked, r.start);
-      if (i < 0 || i + picked.length > r.end) {
-        showAskError("Couldn't match that selection to the document. Select words in the passage itself, not the heading path or the … markers.");
-        return;
-      }
-      start = i; end = i + picked.length;
-    }
+  const inCard = sel && !sel.isCollapsed && cardEl.contains(sel.anchorNode) && cardEl.contains(sel.focusNode);
+  const picked = inCard ? sel.toString().trim() : "";
+  if (picked.length < 3) {
+    showAskError("First select the words that answer the question in this passage, then click “This is the answer”.");
+    return;
   }
+  if (picked.length > maxAnswerChars()) {
+    showAskError(`That selection is ${picked.length} characters. Select just the answer: at most ${maxAnswerChars()} characters (half the fixed chunk size), so every strategy can be credited fairly.`);
+    return;
+  }
+  const i = doc.text.indexOf(picked, r.start);
+  if (i < 0 || i + picked.length > r.end) {
+    showAskError("Couldn't match that selection to the document. Select words in the passage itself, not the heading path or the … markers.");
+    return;
+  }
+  const start = i, end = i + picked.length;
+  $("askErr").classList.add("hidden");
   answers[qkey(res.question)] = { question: res.question, start, end, text: doc.text.slice(start, end) };
   persistAnswers();
   rerun();
@@ -662,12 +672,13 @@ function renderEval(out) {
     <h3>Results: ${n} question${n > 1 ? "s" : ""}</h3>
     <div class="meta">${esc(doc.name)} · fixed ${s.size}/${s.overlap} overlap · max ${s.max_chars} · change the settings in section 1 and run again to compare</div>
     <div class="tablewrap"><table class="scoretable">
-      <thead><tr><th>Strategy</th><th>Answers found in top ${out.k}</th><th>Average rank (when found)</th></tr></thead>
+      <thead><tr><th>Strategy</th><th>Answers found in top ${out.k}</th><th>Average rank (when found)</th><th title="Mean reciprocal rank: the average of 1/rank over all questions, counting a miss as 0. 1.0 means every answer was ranked first.">MRR</th></tr></thead>
       <tbody>${S.map((k) => `
         <tr class="${k} ${k === best ? "best" : ""}">
           <td class="name">${NAMES[k]}${k === best ? '<span class="bestpill">Best</span>' : ""}</td>
           <td class="big">${sm[k].found} <span class="sub">of ${n}</span></td>
           <td class="big">${sm[k].avg_rank == null ? "–" : sm[k].avg_rank.toFixed(1)}</td>
+          <td class="big">${sm[k].mrr == null ? "–" : sm[k].mrr.toFixed(2)}</td>
         </tr>`).join("")}
       </tbody></table></div>
     <div class="tablewrap"><table class="ranktable">
@@ -681,23 +692,35 @@ function renderEval(out) {
 }
 
 let res = null;
+let askSeq = 0;  // id of the latest request; older responses are ignored
+
+function setAsking(on) {
+  $("askBtn").disabled = on; $("askBtn").textContent = on ? "Retrieving…" : "Retrieve";
+  document.querySelectorAll(".chip, .qlink").forEach((b) => { b.disabled = on; });
+}
+
 async function ask() {
   const q = $("question").value.trim();
   if (!q || !doc) return;
+  const mine = ++askSeq;
   $("askErr").classList.add("hidden");
-  $("askBtn").disabled = true; $("askBtn").textContent = "Retrieving…";
+  setAsking(true);
   try {
     const r = await fetch("/api/query", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ doc_id: doc.id, question: q, k: 5, answer: answers[qkey(q)] ? { start: answers[qkey(q)].start, end: answers[qkey(q)].end } : null }),
     });
     const body = await r.json();
+    if (mine !== askSeq) return;  // a newer question was asked meanwhile
     if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Query failed.");
     res = body;
     renderResults();
   } catch (e) {
+    if (mine !== askSeq) return;
     $("askErr").textContent = e.message; $("askErr").classList.remove("hidden");
-  } finally { $("askBtn").disabled = false; $("askBtn").textContent = "Retrieve"; }
+  } finally {
+    if (mine === askSeq) setAsking(false);
+  }
 }
 
 function renderResults() {
@@ -715,7 +738,7 @@ function renderResults() {
   $("summary").innerHTML = `<div class="verdict ${v.cls}" role="${v.cls === "disagree" ? "alert" : "status"}">
       <div class="vhead">${v.head}</div><div class="vline">${v.line}</div></div>
     <div class="pairs">${pairs}
-    <span class="pair"><b>${uniqueCount}</b> of ${S.length * 5} results found by only one strategy</span></div>`;
+    <span class="pair"><b>${uniqueCount}</b> of ${S.reduce((n, k) => n + res.results[k].length, 0)} results found by only one strategy</span></div>`;
 
   // Document map
   let m = "";
@@ -738,7 +761,7 @@ function renderResults() {
   const marked = answers[qkey(res.question)];
   $("answerBar").innerHTML = marked
     ? `Marked answer: <b>“${esc(snippet(marked.text, 120))}”</b> · <button class="link" id="clearAns">Clear</button>`
-    : `Which passage answers the question? Click <b>This is the answer</b> on it. For a stricter check, select the exact answer words in a passage first.`;
+    : `Which words answer the question? Select them in any passage, then click <b>This is the answer</b> on that passage.`;
   if (marked) $("clearAns").onclick = clearAnswer;
   const colVerdict = (k) => {
     if (!marked || !res.answer_rank) return "";
@@ -803,12 +826,20 @@ function verdict() {
     head = `${NAMES[a]} and ${NAMES[b]} disagree on the best passage`;
     groups = [[a], [b]];
   }
-  // Prefer a full passage over a tiny fragment to describe a group that agrees.
+  // A #1 that is only a heading or fragment is described as exactly that.
+  const frag = Object.fromEntries((res.top1_fragments || []).map((f) => [f.strategy, f]));
   const pick = (g) => g.map((k) => top[k]).sort((x, y) => (y.end - y.start) - (x.end - x.start))[0];
   const descs = groups.map((g) => describe(pick(g)));
   const clash = new Set(descs).size < descs.length;  // same section, different text
-  const parts = groups.map((g, i) => `${list(g)} ${g.length > 1 ? "both pick" : "picks"} ${
-    clash ? describe(pick(g), true) : descs[i]}`);
+  const parts = groups.map((g, i) => {
+    const f = g.length === 1 && frag[g[0]];
+    if (f) {
+      const what = f.heading ? `the heading “${esc(f.heading)}”` : `a ${top[g[0]].end - top[g[0]].start}-character fragment, “${esc(f.text)}”`;
+      const where = f.inside.length ? `, which sits inside ${f.inside.map((k) => NAMES[k] + "'s").join(" and ")} #1 passage` : "";
+      return `${NAMES[g[0]]} only retrieved ${what}${where}`;
+    }
+    return `${list(g)} ${g.length > 1 ? "both pick" : "picks"} ${clash ? describe(pick(g), true) : descs[i]}`;
+  });
   const middle = S.filter((k) => !groups.flat().includes(k));
   if (middle.length) parts.push(`${list(middle)} overlaps both`);
   return { cls: "disagree", head: "⚠ " + head, line: parts.join(". ") + "." };
@@ -857,21 +888,23 @@ function card(k, r, maxScore) {
       <span class="rank">${r.rank}</span>
       <span class="score" title="${SCORE_TIP}">${r.score.toFixed(3)}</span>
       <span class="scorebar" title="${SCORE_TIP}"><i style="width:${Math.max(0, (r.score / maxScore) * 100)}%"></i></span>
-      <span class="meta">${r.end - r.start} chars</span>
+      <span class="meta" title="Characters of the document this chunk covers${k === "section" && r.text.length !== r.end - r.start ? `. With its heading path, ${r.text.length} characters were embedded.` : "."}">${r.end - r.start} source chars</span>
     </div>
     <div class="badges">${badges.join("")}</div>
     <div class="text">${body}</div>
-    <div class="tools"><button class="link more">Show all</button><button class="link locate" data-start="${r.start}" data-end="${r.end}">Show in document</button><button class="link mark" data-k="${k}" data-rank="${r.rank}" title="Mark this passage (or the words you've selected in it) as the correct answer to this question">This is the answer</button></div>
+    <div class="tools"><button class="link more">Show all</button><button class="link locate" data-start="${r.start}" data-end="${r.end}">Show in document</button><button class="link mark" data-k="${k}" data-rank="${r.rank}" title="Select the answer words in this passage first, then click to mark them as the correct answer">This is the answer</button></div>
   </div>`;
 }
 
+// Hovering a card outlines the cards the server says retrieved the same
+// passage (its `matches`), so the page never applies a different rule.
 function linkCards(el, on) {
   el.classList.toggle("hovered", on);
-  const a = { start: +el.dataset.start, end: +el.dataset.end };
+  const r = res.results[el.dataset.k].find((x) => x.rank === +el.dataset.rank);
+  const linked = new Set((r?.matches || []).map((m) => `${m.strategy}:${m.rank}`));
   document.querySelectorAll(".res").forEach((o) => {
     if (o.dataset.k === el.dataset.k) return;
-    const hit = overlap(a, { start: +o.dataset.start, end: +o.dataset.end }) >= AGREE;
-    o.classList.toggle("linked", on && hit);
+    o.classList.toggle("linked", on && linked.has(`${o.dataset.k}:${o.dataset.rank}`));
   });
 }
 

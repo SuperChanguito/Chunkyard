@@ -52,14 +52,19 @@ section-aware chunking shines.
 ## Reading the results
 
 - **Score**: cosine similarity between the question and the chunk.
-- **Agreement**: two chunks from different strategies "agree" when they cover
-  the same part of the document (they share at least 25% of the shorter
-  chunk's characters). Each card lists the other strategies that found the
-  same passage and at what rank. **Only *X* found this** marks a passage the
-  other strategies missed.
+- **Agreement**: two chunks from different strategies "agree" (retrieved the
+  same passage) when the characters they share are at least 25% of the
+  **longer** chunk, and both chunks are at least 100 characters. A heading or
+  fragment that merely sits inside another strategy's passage never counts as
+  agreement. Each card lists the other strategies that found the same passage
+  and at what rank, and hovering a card outlines exactly those cards.
+  **Only *X* found this** marks a passage the other strategies missed.
 - **Verdict**: when the strategies' #1 passages differ, a warning box names
   who disagrees ("Paragraph disagrees with Fixed and Section…") and says where
-  each one's top hit came from. Agreement gets a quiet one-line note instead.
+  each one's top hit came from. If a #1 is only a heading or a short fragment,
+  it says so ("Paragraph only retrieved the heading 'What's not covered',
+  which sits inside Section's #1 passage"). Agreement gets a quiet one-line
+  note instead.
   Below it: whether each pair picked the same #1 passage, and how much of their
   top-5 text overlaps.
 - **Document map**: where each strategy's top-5 hits sit in the document.
@@ -70,11 +75,17 @@ section-aware chunking shines.
 - **Warning flags** on retrieved chunks (hover any badge for why it matters):
   - *Starts mid-sentence* / *Ends mid-sentence* (yellow): the chunk is cut
     partway through a sentence. Bullets, headings, and paragraph breaks don't
-    count.
+    count. A closing bracket, quote, colon or semicolon only ends a sentence
+    when sentence punctuation comes right before it ("…carton.)" ends one,
+    "Inject 140 mg (1 mL)" doesn't).
   - *Short* (red): under 100 characters, usually a lone heading or fragment.
   - *Numbers without labels* (violet): a line of values, like a table row
     ("(n = 562) -59 -50 -46 -34"), with no column heading in the few lines
-    above it in the same chunk.
+    above it in the same chunk. Dates and ordinary sentences with units
+    ("weighs 2.1 kg (4.6 lb)") aren't flagged.
+- **Lengths** on cards and in the stats are *source chars*: how much of the
+  document a chunk covers. Section chunks also carry their heading path when
+  embedded; hover a section card's length to see the embedded size.
   - *Model saw only 256 tokens*: the chunk is longer than the embedding model
     reads, so the end of it didn't affect its score.
 - **Fragments warning** on a strategy's card: its chunks average under 200
@@ -107,22 +118,28 @@ information is missing), with a table of the differences.
 
 ## Scoring: which strategy was right?
 
-1. Ask a question and click **This is the answer** on the passage that
-   answers it. For a stricter check, first select the exact answer words
-   inside a passage (e.g. "two years from the date of purchase"); then only
-   those words count as the answer.
+1. Ask a question, **select the exact words that answer it** in any passage
+   (e.g. "two years from the date of purchase"), and click **This is the
+   answer** on that passage. Clicking without a selection does nothing but ask
+   for one, and a selection can be at most half the fixed chunk size (250
+   characters by default). A whole chunk can't be the answer, because it
+   would only ever be credited to the strategy that produced it.
 2. Each column now says **Answer found at rank N** or **Not in top 5**.
 3. Repeat for a few questions. Section 4 lists them. **Save to file** writes
    them to a JSON file; **Load from file** brings them back.
 4. **Run saved set** runs every saved question against all three strategies
-   and shows, for each strategy, how many answers were found in the top 5 and
-   their average rank, plus a per-question breakdown.
+   and shows, for each strategy, how many answers were found in the top 5,
+   their average rank, and **MRR** (mean reciprocal rank: the average of
+   1/rank, with a miss counting as 0, so one number reflects both hits and
+   misses), plus a per-question breakdown.
 
 How "found" is decided: the marked answer is stored as a span of the
 document text, not as a chunk, so the same answers can score all three
 strategies at any chunk size. A retrieved chunk counts as containing the
 answer if it covers **at least half** of that span. A heading that sits next
-to the answer covers none of it and doesn't count.
+to the answer covers none of it and doesn't count. Keeping answers to at most
+half the fixed chunk size guarantees that some fixed chunk always covers at
+least half of any answer, so every strategy can be credited fairly.
 
 Answer sets are tied to the exact document text (a fingerprint is saved in
 the file), so a set made for one document can't be applied to another.
@@ -135,8 +152,16 @@ different copy is scored as a miss.
 
 ## Files and limits
 
-- `.txt`, `.md`, and `.pdf` up to 20 MB. Scanned PDFs without a text layer
-  won't work.
+- `.txt`, `.md`, and `.pdf` up to **5 MB**, which keeps chunking and
+  embedding quick in a live demo. The built-in FDA sample is larger (6 MB),
+  so load it with its sample button rather than by dragging the file in.
+  Scanned PDFs without a text layer won't work.
+- **Text encodings:** UTF-8, UTF-16 (with a byte-order mark), and Windows-1252
+  (Notepad's old default). Files that decode to mostly control characters are
+  refused as "not a text file".
+- **Speed:** embeddings are cached by chunk text, so re-chunking only embeds
+  chunks it hasn't seen. Changing only the fixed size leaves every paragraph
+  and section chunk cached. Parsed PDF text is cached by file hash.
 - **Headings** are detected from Markdown `#`, underlined (`===`/`---`),
   numbered (`2.1 Setup`), ALL CAPS, and short capitalized lines that stand
   alone. PDFs don't record which heading is inside which, so a PDF's
@@ -144,13 +169,22 @@ different copy is scored as a miss.
 - **PDF running headers and footers** (a line like "Reference ID: 12345" or
   "Page 3 of 40" near the top or bottom of most pages) are removed so they
   don't become fake headings.
-- **Table rows and chart labels** in PDFs can still be mistaken for small
-  headings. Lines with data numbers ("Back pain 5.6 6.2") are skipped, and
-  numbered headings ("6.2 Immunogenicity") always nest under their numbered
-  parent, so mistakes add noise but never a wrong breadcrumb.
+- **Guessed headings in PDFs** (lines with no `#` or numbering) must look like
+  a real subheading: not a single letter, a code ("GRH0434v1"), or a lone ALL
+  CAPS word ("AMGEN"); not followed by table content ("(N = 599)", "%", rows
+  of numbers); preceded by a finished sentence or another heading; and
+  followed by prose (inside a numbered section, prose is required). On the
+  FDA sample this removes table, figure, and diagram labels such as
+  "REPATHA", "Hazard", "No. at Risk", "Medicine", and "Stomach" while keeping
+  "Risk Summary", "Absorption", and "Adverse Reactions in a 52-Week Controlled
+  Trial". It is still a heuristic: an unusual document can produce a wrong or
+  missing breadcrumb. Numbered headings ("6.2 Immunogenicity") always nest
+  under their numbered parent.
 - **PDF paragraphs** are guessed from line lengths, because PDF text usually has
   no blank lines between paragraphs. A word hyphenated across a line break is
-  re-joined, which occasionally removes a real hyphen.
+  re-joined ("subcuta- / neous") only when both parts are lowercase and the
+  document doesn't show it's a compound; "Non-HDL" and "patient-safety" keep
+  their hyphens.
 - The last 5 documents stay in memory; nothing is written to disk.
 
 To use a different model, set `CHUNKYARD_MODEL` (for example
@@ -168,6 +202,10 @@ To use a different model, set `CHUNKYARD_MODEL` (for example
 
 Tests: `uv run pytest` (they use a fake embedder, so they're fast and don't
 need the model). GitHub Actions runs them on every push.
+`tests/test_qa_fixes.py` has a regression test for each finding of the
+independent QA review. The page itself has browser checks in `tests/ui/`:
+start `uv run python tests/ui/preview_server.py 8766` (fake embedder, no
+model), then in `tests/ui` run `npm install` once and `node qa_ui_check.js`.
 `tests/fixtures/fictional-label-pages.txt` is an invented drug label laid out
 like text extracted from a PDF (running footers, dashed and numbered headings,
 a results table) and guards the heading detection against regressions.
