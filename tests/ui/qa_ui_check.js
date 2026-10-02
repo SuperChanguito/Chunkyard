@@ -108,10 +108,11 @@ async function selectIn(page, k, rank, phrase) {
   // Fix 5: a slow earlier response never overwrites a later question.
   await page.setRequestInterception(true);
   let first = true;
-  page.on("request", (r) => {
+  const delayFirst = (r) => {
     if (r.url().endsWith("/api/query") && first) { first = false; setTimeout(() => r.continue(), 2500); }
     else r.continue();
-  });
+  };
+  page.on("request", delayFirst);
   const chips = await page.$$(".chip");
   await chips[1].click();                       // slow request
   await new Promise((r) => setTimeout(r, 150));
@@ -122,6 +123,65 @@ async function selectIn(page, k, rank, phrase) {
   const shown = await page.evaluate(() => [res.question, document.getElementById("question").value]);
   ok(disabledWhileBusy, "example chips and saved-question links are disabled while a request is in flight");
   ok(shown[0] === shown[1], `results match the question in the box ("${shown[1]}")`);
+
+  page.off("request", delayFirst);
+  await page.setRequestInterception(false);
+
+  // Follow-up 3: agreeing strategies in different sections are described separately.
+  await page.goto(`${BASE}/?sample=tent&q=${q("What isn't covered?")}`);
+  await page.waitForSelector(".res", { timeout: 60000 });
+  const v3 = await page.evaluate(() => {
+    const line = document.querySelector("#summary .verdict").textContent;
+    const where = Object.fromEntries(Object.entries(res.results).map(([k, rs]) => [k, rs[0] && (rs[0].section || []).join("|")]));
+    return { line, where };
+  });
+  const merged = v3.line.match(/(\w+) and (\w+) both pick/);
+  ok((!merged || v3.where[merged[1].toLowerCase()] === v3.where[merged[2].toLowerCase()]) && /; Section picks a passage in/.test(v3.line),
+    `"both pick" only when the locations match: ${v3.line.replace(/\s+/g, " ").trim()}`);
+
+  // Follow-up 2: stored whole-passage answers are skipped, with a message.
+  const fp = await page.evaluate(() => doc.fingerprint);
+  await page.evaluate((fp) => {
+    const t = doc.text, i = t.indexOf("two years from the date of purchase");
+    localStorage.setItem("chunkyard-answers:" + fp, JSON.stringify({
+      "old whole passage": { question: "Old whole passage", start: 0, end: 290, text: t.slice(0, 290) },
+      "how long is the warranty?": { question: "How long is the warranty?", start: i, end: i + 35, text: t.slice(i, i + 35) },
+    }));
+  }, fp);
+  await page.goto(`${BASE}/?sample=tent`);
+  await page.waitForSelector("#setInfo .setlist", { timeout: 60000 });
+  const stored = await page.evaluate(() => [Object.keys(answers), document.getElementById("setErr").textContent]);
+  ok(stored[0].length === 1 && stored[0][0] === "how long is the warranty?", "a stored 290-character answer is skipped, a short one kept");
+  ok(stored[1].includes("1 saved answer was a whole passage, not answer words. Re-mark it by selecting the answer words."),
+    "skipping a stored whole passage says so");
+
+  // ...and the same rule applies to a loaded answer-set file.
+  const set = await page.evaluate(() => {
+    const t = doc.text, i = t.indexOf("two years from the date of purchase");
+    return JSON.stringify({ format: "chunkyard-answer-set", version: 1, document: { name: doc.name, fingerprint: doc.fingerprint },
+      items: [{ question: "A", answer: { start: 0, end: 290, text: t.slice(0, 290) } },
+              { question: "B", answer: { start: 10, end: 300, text: t.slice(10, 300) } },
+              { question: "C", answer: { start: i, end: i + 35, text: t.slice(i, i + 35) } }] });
+  });
+  const input = await page.$("#loadSet");
+  await page.evaluate((el, json) => {
+    const dt = new DataTransfer(); dt.items.add(new File([json], "set.json", { type: "application/json" }));
+    el.files = dt.files; el.dispatchEvent(new Event("change"));
+  }, input, set);
+  await page.waitForFunction(() => !document.getElementById("setErr").classList.contains("hidden"), { timeout: 10000 });
+  const loaded = await page.evaluate(() => [Object.keys(answers).sort(), document.getElementById("setErr").textContent]);
+  ok(!loaded[0].includes("a") && !loaded[0].includes("b") && loaded[0].includes("c"), "a loaded file's whole-passage answers are skipped");
+  ok(loaded[1].includes("2 saved answers were whole passages, not answer words. Re-mark them by selecting the answer words."),
+    `loading says how many were skipped: ${loaded[1]}`);
+
+  // ...and running the set warns when the fixed size has since been lowered.
+  await page.evaluate(() => { document.getElementById("size").value = "60"; document.getElementById("overlap").value = "10"; });
+  await page.click("#rechunkBtn");
+  await page.waitForFunction(() => doc.settings.size === 60 && !document.getElementById("runSetBtn").disabled, { timeout: 60000 });
+  await page.click("#runSetBtn");
+  await page.waitForSelector("#evalOut .scoretable", { timeout: 60000 });
+  ok(await page.$eval("#setErr", (e) => !e.classList.contains("hidden") && e.textContent.includes("half the current fixed size of 60")),
+    "running the set warns about answers longer than half the current fixed size");
 
   ok(errors.length === 0, "no JavaScript errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   await browser.close();

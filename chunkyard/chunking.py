@@ -174,6 +174,8 @@ def detect_header(line: str, next_line: str | None, prev_blank: bool) -> tuple[i
         # reset the document's structure.
         return (1 if len(words) >= 2 else INFERRED), s
     next_blank = next_line is not None and not next_line.strip()
+    if prev_blank and next_blank and s[0].isupper() and len(s) <= 70 and s.endswith("?"):
+        return INFERRED, s  # "What is REPATHA?": patient leaflets use questions as headings
     if (prev_blank and next_blank and s[0].isupper() and len(s) <= 70 and len(words) <= 9
             and not s.endswith((".", ",", ";", ":", "!", "?")) and not re.match(r"^[-*•\d]", s)
             and not _has_data_numbers(words)):
@@ -199,9 +201,36 @@ def _is_table_line(line: str) -> bool:
 
 
 def _is_prose(paragraph: str) -> bool:
-    """At least two lowercase words and a finished sentence."""
+    """At least two lowercase words and a finished sentence (or a lead-in ending in ':')."""
     lowercase_words = [w for w in paragraph.split() if re.search(r"[a-z]", w)]
+    if paragraph.rstrip().endswith(":"):
+        return len(lowercase_words) >= 5  # "You can use the:" labels a diagram; not a lead-in
     return len(lowercase_words) >= 2 and bool(_SENTENCE_DONE.search(paragraph))
+
+
+_LOWER_WORD = re.compile(r"[a-z][a-z'’-]*[.,;:!?)]*")
+
+
+def _reads_as_text(line: str) -> bool:
+    """False for page debris like 'vxx', a URL, a copyright or version line."""
+    return sum(1 for w in line.split() if _LOWER_WORD.fullmatch(w)) >= 2
+
+
+# Addresses and admin lines that stand alone like headings but never are.
+_ADMIN = re.compile(
+    r"\b\d{5}(?:-\d{4})?\b"                                   # ZIP code
+    r"|License Number|Revised:|Reference ID|^See \d+ for\b"
+    r"|\(?\b\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b"                   # phone number
+    r"|\b(?:Drive|Street|Avenue|Road|Boulevard|Suite)$"       # street address
+    r"|\s(?:and|or|for|the|of|to|with)$",                     # sentence cut off mid-way
+    re.IGNORECASE)
+_SMALL_WORDS = {"a", "an", "and", "as", "at", "by", "for", "in", "of", "on", "or", "the", "to", "with"}
+
+
+def _is_title_case(words: list[str]) -> bool:
+    """'Patient Information', 'Instructions for Use': every word but small ones capitalised."""
+    words = [w for w in words if w[0].isalpha()]
+    return len(words) >= 2 and all(w[0].isupper() or w.lower() in _SMALL_WORDS for w in words)
 
 
 def _drop_unlikely_guesses(lines: list[str], headers: dict[int, tuple[int, str]]) -> None:
@@ -230,6 +259,11 @@ def _drop_unlikely_guesses(lines: list[str], headers: dict[int, tuple[int, str]]
             out.append(ln.strip())
         return " ".join(out)
 
+    def ends_block(j: int) -> bool:
+        """A finished sentence, or an admin line like 'Revised: 08/2025'."""
+        line = lines[j].rstrip()
+        return bool(_LINE_ENDS_SENTENCE.search(line)) or bool(_ADMIN.search(line))
+
     def is_explicit(i: int) -> bool:
         return headers[i][0] != INFERRED
 
@@ -245,7 +279,7 @@ def _drop_unlikely_guesses(lines: list[str], headers: dict[int, tuple[int, str]]
             if level != INFERRED:
                 explicit_seen.append(i)
                 caps = title.upper() == title and not is_numbered(i) and not lines[i].lstrip().startswith("#")
-                if caps and any(_is_table_line(lines[j]) for j in after(i, 2)):
+                if caps and (any(_is_table_line(lines[j]) for j in after(i, 2)) or _ADMIN.search(title)):
                     del headers[i]
                     changed = True
                 continue
@@ -255,14 +289,23 @@ def _drop_unlikely_guesses(lines: list[str], headers: dict[int, tuple[int, str]]
             nxt = after(i, 2)
             k = pos[i]
             prev = nonblank[k - 1] if k > 0 else None
+            # A page or document title ("Patient Information") is often followed
+            # by a product name block or a diagram rather than prose; Title Case
+            # after page debris (not after running text) is enough for those.
+            after_page_break = (prev is None or (prev not in headers and not _reads_as_text(lines[prev]) and (
+                ends_block(prev) or (k > 1 and ends_block(nonblank[k - 2])))))
+            title_after_debris = _is_title_case(words) and not title.endswith("?") and after_page_break
             followed_ok = bool(nxt) and (
                 _is_prose(paragraph_from(nxt[0]))
-                or (not in_numbered and nxt[0] in headers))
-            preceded_ok = (prev is None or prev in headers
-                           or bool(_LINE_ENDS_SENTENCE.search(lines[prev].rstrip())))
+                # "Data" then "Animal Data": a guess may introduce another guess
+                or (nxt[0] in headers and (not in_numbered or headers[nxt[0]][0] == INFERRED))
+                or title_after_debris)
+            preceded_ok = (prev is None or prev in headers or title.endswith("?")
+                           or ends_block(prev) or after_page_break)
             if (len(letters) < 2
                     or (len(words) == 1 and title.upper() == title)  # "AMGEN", "WATCH": logos, labels
                     or any(_CODE_TOKEN.search(w) for w in words)
+                    or _ADMIN.search(title)
                     or any(_is_table_line(lines[j]) for j in nxt)
                     or not followed_ok
                     or not preceded_ok):
@@ -293,6 +336,11 @@ def split_sections(text: str) -> list[Section]:
         prev_blank = i == 0 or not lines[i - 1].strip()
         nxt = lines[i + 1] if i + 1 < len(lines) else None
         h = detect_header(ln, nxt, prev_blank)
+        if (not h and ln.strip().endswith("?") and i > 0
+                and _LINE_ENDS_SENTENCE.search(lines[i - 1].rstrip())):
+            # A PDF often loses the blank line before a question heading
+            # ("...side effects." then "How should I store REPATHA?").
+            h = detect_header(ln, nxt, True)
         if h:
             headers[i] = h
             if nxt is not None and _SETEXT.match(nxt.strip()) and not _MD_HEADER.match(ln.strip()):

@@ -63,8 +63,11 @@ section-aware chunking shines.
   who disagrees ("Paragraph disagrees with Fixed and Section…") and says where
   each one's top hit came from. If a #1 is only a heading or a short fragment,
   it says so ("Paragraph only retrieved the heading 'What's not covered',
-  which sits inside Section's #1 passage"). Agreement gets a quiet one-line
-  note instead.
+  which sits inside Section's #1 passage"). Two strategies that agree are
+  described together ("Fixed and Section both pick a passage in …") only when
+  their #1 passages sit in the same place; otherwise each location is named
+  ("Fixed picks a passage spanning …; Section picks a passage in …").
+  Agreement gets a quiet one-line note instead.
   Below it: whether each pair picked the same #1 passage, and how much of their
   top-5 text overlaps.
 - **Document map**: where each strategy's top-5 hits sit in the document.
@@ -144,6 +147,11 @@ least half of any answer, so every strategy can be credited fairly.
 Answer sets are tied to the exact document text (a fingerprint is saved in
 the file), so a set made for one document can't be applied to another.
 Change the chunk sizes in section 1 and run the set again to compare settings.
+The same length limit applies to answers loaded from a file or remembered by
+the browser from an older version: whole-passage answers are skipped with a
+message asking you to re-mark them. If you lower the fixed size below twice
+an answer's length, **Run saved set** still runs but warns that Fixed can't
+be credited fairly for those answers.
 
 Current limitation: each question has one accepted answer location. If the
 same answer appears in several places (an FDA label repeats dosing in its
@@ -172,12 +180,21 @@ different copy is scored as a miss.
 - **Guessed headings in PDFs** (lines with no `#` or numbering) must look like
   a real subheading: not a single letter, a code ("GRH0434v1"), or a lone ALL
   CAPS word ("AMGEN"); not followed by table content ("(N = 599)", "%", rows
-  of numbers); preceded by a finished sentence or another heading; and
-  followed by prose (inside a numbered section, prose is required). On the
-  FDA sample this removes table, figure, and diagram labels such as
-  "REPATHA", "Hazard", "No. at Risk", "Medicine", and "Stomach" while keeping
-  "Risk Summary", "Absorption", and "Adverse Reactions in a 52-Week Controlled
-  Trial". It is still a heuristic: an unusual document can produce a wrong or
+  of numbers); not an address or admin line (a ZIP code, phone number,
+  street address, "License Number", "Revised:", "See 17 for", or a line that
+  ends in "and"/"of"/"the"); preceded by a finished sentence, another heading,
+  or one line of page debris after one ("vxx", a version or copyright line);
+  and followed by prose (inside a numbered section, prose or a further
+  subheading such as "Data" then "Animal Data"). A Title Case title right
+  after a page break ("Patient Information", "Instructions for Use") is kept
+  even when a product name or diagram follows it. A standalone question of
+  70 characters or fewer followed by prose ("What is REPATHA?") is a heading,
+  as patient leaflets use them. On the FDA sample this removes table, figure,
+  diagram, and address labels such as "REPATHA", "Hazard", "No. at Risk",
+  "Medicine", "Stomach", and "Thousand Oaks, California 91320-1799" while
+  keeping "Risk Summary", "Absorption", "Adverse Reactions in a 52-Week
+  Controlled Trial", "Patient Information", and the leaflet's questions. It is
+  still a heuristic: an unusual document can produce a wrong or
   missing breadcrumb. Numbered headings ("6.2 Immunogenicity") always nest
   under their numbered parent.
 - **PDF paragraphs** are guessed from line lengths, because PDF text usually has
