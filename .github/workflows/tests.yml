@@ -14,7 +14,8 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.12"
-      # The tests use a fake embedder, so they only need numpy and pytest.
+      # The tests use a fake embedder, so they need numpy, pytest, pypdf (FDA
+      # sample), and FastAPI + httpx (upload limit), but not PyTorch.
       # Skipping the full project install avoids downloading PyTorch (~1 GB).
       - name: Run tests
-        run: uv run --no-project --with pytest --with numpy pytest -v
+        run: uv run --no-project --with pytest --with numpy --with pypdf --with fastapi --with python-multipart --with httpx pytest -v

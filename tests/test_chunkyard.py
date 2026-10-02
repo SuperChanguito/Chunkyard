@@ -63,10 +63,12 @@ def test_sections_respect_max_size(sample_text):
 
 
 def test_header_styles_detected():
+    # A lone ALL CAPS word is no longer a heading (QA: logos and table labels
+    # like "AMGEN" or "PLACEBO"), so the caps heading here has two words.
     text = ("Intro\n=====\n\nHello there.\n\n1.2 Installation Steps\n\nDo this.\n\n"
-            "TROUBLESHOOTING\n\nRestart it.\n\nPlain Heading\n\nBody text.\n")
+            "COMMON PROBLEMS\n\nRestart it.\n\nPlain Heading\n\nBody text.\n")
     titles = [s.path[-1] for s in split_sections(text) if s.path]
-    assert titles == ["Intro", "1.2 Installation Steps", "TROUBLESHOOTING", "Plain Heading"]
+    assert titles == ["Intro", "1.2 Installation Steps", "COMMON PROBLEMS", "Plain Heading"]
 
 
 def test_inferred_headings_nest_only_when_adjacent():
@@ -110,9 +112,11 @@ class FakeEmbedder:
 
 
 def test_overlap_ratio():
-    assert overlap_ratio((0, 10), (5, 20)) == 0.5
+    # QA fix 1: measured against the LONGER span, so a small piece inside a big
+    # passage shares little with it (it used to score 1.0 against the shorter).
+    assert overlap_ratio((0, 10), (5, 20)) == 5 / 15
     assert overlap_ratio((0, 10), (10, 20)) == 0
-    assert overlap_ratio((0, 100), (40, 50)) == 1.0
+    assert overlap_ratio((0, 100), (40, 50)) == 0.1
 
 
 def test_query_marks_agreement(sample_text):

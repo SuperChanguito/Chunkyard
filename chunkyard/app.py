@@ -19,7 +19,7 @@ from .samples import SAMPLES, SAMPLES_DIR
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
-MAX_UPLOAD = 20 * 1024 * 1024
+MAX_UPLOAD = 5 * 1024 * 1024  # keeps chunking and embedding quick during demos
 
 embedder = Embedder()
 store = Store(embedder)
@@ -84,7 +84,9 @@ def upload(file: UploadFile = File(...), size: int = Form(500), overlap: int = F
            max_chars: int = Form(1200)) -> dict:
     data = file.file.read(MAX_UPLOAD + 1)
     if len(data) > MAX_UPLOAD:
-        raise HTTPException(413, "That file is over 20 MB.")
+        raise HTTPException(413, "That file is over 5 MB. Chunkyard keeps uploads small so "
+                                 "chunking and embedding stay quick. Try a shorter document or an "
+                                 "excerpt. (The built-in samples load from their buttons.)")
     try:
         text = load_document(file.filename or "upload.txt", data)
     except ValueError as e:

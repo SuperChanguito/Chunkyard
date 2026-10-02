@@ -127,8 +127,13 @@ _NUMERIC = re.compile(r"^[\d.,:%/()+*†±<>=-]*\d[\d.,:%/()+*†±<>=-]*$")
 
 
 def _has_data_numbers(words: list[str]) -> bool:
-    """True for lines like "Nasopharyngitis 9.6 10.5": table rows, not headings."""
-    return any(_NUMERIC.match(w) for w in words)
+    """True for lines like "Nasopharyngitis 9.6 10.5": table rows, not headings.
+
+    One whole number is allowed ("Trailhead 2 Tent"); two or more values, or
+    any decimal or percentage, reads as data.
+    """
+    nums = [w for w in words if _NUMERIC.match(w)]
+    return len(nums) >= 2 or any(re.search(r"\d[.,%]|%", w) for w in nums)
 
 
 INFERRED = 0  # level placeholder for headings guessed from layout alone
@@ -176,6 +181,95 @@ def detect_header(line: str, next_line: str | None, prev_blank: bool) -> tuple[i
     return None
 
 
+_CODE_TOKEN = re.compile(r"[A-Za-z]\d|\d[A-Za-z]")  # "GRH0434v1", "1XXXXXX" (not "52-Week")
+_TABLE_LINE = re.compile(r"^\(?\s*[nN]\s*=|^[%†‡*§]+$|^[\d.,%()+\-−–\s]+$")
+_SENTENCE_DONE = re.compile(r"[.!?][)\]\"'”’]*(?:\s|$)")
+_LINE_ENDS_SENTENCE = re.compile(r"[.!?:][)\]\"'”’]*$")
+
+
+def _is_table_line(line: str) -> bool:
+    """'(N = 599)', '%', '13780 13447', 'Placebo 8 8 2 5': table cells, not text."""
+    s = line.strip()
+    if _TABLE_LINE.match(s):
+        return True
+    words = s.split()
+    nums = [w for w in words if _NUMERIC.match(w)]
+    prose = [w for w in words if re.search(r"[a-z]{2,}", w)]
+    return len(nums) >= 2 and len(nums) >= len(prose)
+
+
+def _is_prose(paragraph: str) -> bool:
+    """At least two lowercase words and a finished sentence."""
+    lowercase_words = [w for w in paragraph.split() if re.search(r"[a-z]", w)]
+    return len(lowercase_words) >= 2 and bool(_SENTENCE_DONE.search(paragraph))
+
+
+def _drop_unlikely_guesses(lines: list[str], headers: dict[int, tuple[int, str]]) -> None:
+    """Remove guessed headings that are really table, figure, or diagram labels.
+
+    Applies to headings found from layout alone (no markup, no numbering) and,
+    for the table check, to ALL CAPS headings. A guessed heading survives only
+    if it isn't a single letter or a code, isn't followed by table content,
+    comes after a finished sentence or another heading, and is followed by
+    prose (or, outside numbered sections, by another heading). A single ALL
+    CAPS word is never a guessed heading; a single Title Case word
+    ("Absorption") can be, when prose surrounds it.
+    """
+    nonblank = [i for i, ln in enumerate(lines) if ln.strip()]
+    pos = {i: k for k, i in enumerate(nonblank)}
+
+    def after(i: int, n: int) -> list[int]:
+        k = pos[i]
+        return nonblank[k + 1:k + 1 + n]
+
+    def paragraph_from(j: int) -> str:
+        out = []
+        for ln in lines[j:j + 6]:
+            if not ln.strip():
+                break
+            out.append(ln.strip())
+        return " ".join(out)
+
+    def is_explicit(i: int) -> bool:
+        return headers[i][0] != INFERRED
+
+    def is_numbered(i: int) -> bool:
+        return not lines[i].lstrip().startswith("#") and bool(_NUMBERED.match(headers[i][1]))
+
+    changed = True
+    while changed:  # dropping one guess can invalidate a neighbour, so repeat
+        changed = False
+        explicit_seen: list[int] = []
+        for i in sorted(headers):
+            level, title = headers[i]
+            if level != INFERRED:
+                explicit_seen.append(i)
+                caps = title.upper() == title and not is_numbered(i) and not lines[i].lstrip().startswith("#")
+                if caps and any(_is_table_line(lines[j]) for j in after(i, 2)):
+                    del headers[i]
+                    changed = True
+                continue
+            words = title.split()
+            letters = [c for c in title if c.isalpha()]
+            in_numbered = bool(explicit_seen) and is_numbered(explicit_seen[-1])
+            nxt = after(i, 2)
+            k = pos[i]
+            prev = nonblank[k - 1] if k > 0 else None
+            followed_ok = bool(nxt) and (
+                _is_prose(paragraph_from(nxt[0]))
+                or (not in_numbered and nxt[0] in headers))
+            preceded_ok = (prev is None or prev in headers
+                           or bool(_LINE_ENDS_SENTENCE.search(lines[prev].rstrip())))
+            if (len(letters) < 2
+                    or (len(words) == 1 and title.upper() == title)  # "AMGEN", "WATCH": logos, labels
+                    or any(_CODE_TOKEN.search(w) for w in words)
+                    or any(_is_table_line(lines[j]) for j in nxt)
+                    or not followed_ok
+                    or not preceded_ok):
+                del headers[i]
+                changed = True
+
+
 @dataclass
 class Section:
     path: list[str]          # header breadcrumb, e.g. ["Setup", "Wi-Fi"]
@@ -203,6 +297,7 @@ def split_sections(text: str) -> list[Section]:
             headers[i] = h
             if nxt is not None and _SETEXT.match(nxt.strip()) and not _MD_HEADER.match(ln.strip()):
                 skip.add(i + 1)
+    _drop_unlikely_guesses([ln.rstrip("\r\n") for ln in lines], headers)
 
     sections: list[Section] = []
     stack: list[tuple[int, str, bool]] = []  # (level, title, is_numbered)

@@ -18,7 +18,23 @@ ENDS_MID = "ends_mid_sentence"
 SHORT = "short"
 UNLABELED_NUMBERS = "unlabeled_numbers"
 
-_SENTENCE_END = tuple('.!?:;)"”’')
+_CLOSERS = ')]"”’\':;'
+_UNITS = {"mg", "ml", "kg", "g", "cm", "mm", "km", "lb", "lbs", "oz", "in", "ft", "mcg", "µg", "l",
+          "hr", "hrs", "h", "min", "sec", "ms", "days", "weeks", "months", "years", "%", "°f", "°c"}
+_DATE = re.compile(
+    r"\b\d{1,2}/\d{1,2}/\d{2,4}\b|\b\d{1,2}/\d{4}\b|\b\d{4}-\d{2}(?:-\d{2})?\b"
+    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(?:\d{1,2},?\s+)?\d{4}\b",
+    re.IGNORECASE)
+
+
+def _ends_sentence(s: str) -> bool:
+    """True if `s` ends a sentence. A closing bracket, quote, colon or
+    semicolon only counts when sentence punctuation comes right before it:
+    "in the carton.)" ends a sentence, "Inject 140 mg (1 mL)" doesn't."""
+    t = s.rstrip()
+    while t and t[-1] in _CLOSERS:
+        t = t[:-1]
+    return t.endswith((".", "!", "?"))
 _BULLET = re.compile(r"^(?:[•▪◦*-]|o\s|\d+[.)]\s|[a-z][.)]\s|#)")
 _NUMBER = re.compile(r"[-−+]?\d+(?:[.,]\d+)*%?")
 _WORD = re.compile(r"[A-Za-z][A-Za-z'’-]+")
@@ -41,7 +57,7 @@ def starts_mid_sentence(text: str, start: int) -> bool:
     if not stripped:
         return False
     gap = before[len(stripped):]
-    if "\n\n" in gap or stripped.endswith(_SENTENCE_END):
+    if "\n\n" in gap or _ends_sentence(stripped):
         return False
     first = text[start:start + 3].lstrip()
     if _BULLET.match(text[start:start + 4]) or first[:1] in "•▪◦":
@@ -59,7 +75,7 @@ def ends_mid_sentence(text: str, end: int) -> bool:
     if end > 0 and text[end - 1].isalnum() and text[end].isalnum():
         return True  # cut through a word
     body = text[:end].rstrip()
-    if not body or body.endswith(_SENTENCE_END):
+    if not body or _ends_sentence(body):
         return False
     after = text[end:end + 300]
     rest = after.lstrip()
@@ -83,6 +99,17 @@ def _numbers(line: str) -> list[str]:
             if not (m.start() > 0 and line[m.start() - 1].isalpha())]
 
 
+def _reads_as_sentence_with_units(line: str) -> bool:
+    """'The tent weighs 2.1 kg (4.6 lb) and packs to 45 x 15 cm.': numbers
+    with their units, inside a sentence that says what they are."""
+    tokens = re.findall(r"[\w°%µ.]+", line.lower())
+    unit_next_to_number = any(
+        re.fullmatch(r"[-−+]?\d+(?:[.,]\d+)*%?", a) and (b.rstrip(".") in _UNITS or a.endswith("%"))
+        for a, b in zip(tokens, tokens[1:] + [""]))
+    lowercase_words = [w for w in line.split() if re.fullmatch(r"[a-z][a-z'’-]+[.,;:]?", w)]
+    return unit_next_to_number and len(lowercase_words) >= 3 and _ends_sentence(line)
+
+
 def unlabeled_numbers(chunk: str) -> bool:
     """True if the chunk has a line of numbers with nothing saying what they are.
 
@@ -92,8 +119,11 @@ def unlabeled_numbers(chunk: str) -> bool:
     in the same chunk looks like a column header: descriptive words, no
     numbers, not a sentence.
     """
-    lines = [ln.strip() for ln in chunk.splitlines() if ln.strip()]
+    # Dates ("Revised: 7/2025") are labels, not measurements.
+    lines = [_DATE.sub("date", ln.strip()) for ln in chunk.splitlines() if ln.strip()]
     for i, line in enumerate(lines):
+        if _reads_as_sentence_with_units(line):
+            continue
         nums, words = _numbers(line), _labels(line)
         numeric = (len(nums) >= 2 and len(words) < len(nums)) or (len(nums) == 1 and not words)
         if not numeric:
