@@ -1,1 +1,5 @@
+# Store text as LF and check it out as LF everywhere, whatever core.autocrlf
+# says, so a fresh clone never shows every file as modified.
+* text=auto eol=lf
+*.bat text eol=crlf
 *.pdf binary

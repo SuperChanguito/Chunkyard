@@ -520,6 +520,15 @@ const storeKey = () => "chunkyard-answers:" + doc.fingerprint;
 
 function loadStoredAnswers() {
   try { answers = JSON.parse(localStorage.getItem(storeKey()) || "{}"); } catch { answers = {}; }
+  if (!answers || typeof answers !== "object") answers = {};
+  $("setErr").classList.add("hidden");
+  // Answers stored before the selected-words rule may be whole passages.
+  const tooLong = Object.keys(answers).filter((key) => answerTooLong(answers[key]));
+  tooLong.forEach((key) => delete answers[key]);
+  if (tooLong.length) {
+    try { localStorage.setItem(storeKey(), JSON.stringify(answers)); } catch {}
+    showSetError(wholePassageMsg(tooLong.length));
+  }
 }
 function persistAnswers() {
   try { localStorage.setItem(storeKey(), JSON.stringify(answers)); } catch {}
@@ -529,6 +538,11 @@ function persistAnswers() {
 // The answer is the exact words the viewer selects, never a whole chunk: a
 // whole-chunk answer would only ever be credited to the strategy it came from.
 function maxAnswerChars() { return Math.floor(doc.settings.size / 2); }
+const answerTooLong = (a) => !a || typeof a.start !== "number" || typeof a.end !== "number" || a.end - a.start > maxAnswerChars();
+const wholePassageMsg = (n) => n === 1
+  ? "1 saved answer was a whole passage, not answer words. Re-mark it by selecting the answer words."
+  : `${n} saved answers were whole passages, not answer words. Re-mark them by selecting the answer words.`;
+function showSetError(msg) { $("setErr").textContent = msg; $("setErr").classList.remove("hidden"); }
 
 function markAnswer(k, rank) {
   const r = res.results[k].find((x) => x.rank === rank);
@@ -627,16 +641,21 @@ $("loadSet").onchange = async (e) => {
     if (data.document?.fingerprint !== doc.fingerprint) {
       throw new Error(`This set was made for “${data.document?.name || "another document"}”. Load that document first, then load the set.`);
     }
-    let n = 0;
+    let n = 0, long = 0;
     for (const it of data.items) {
       const { start, end, text } = it.answer || {};
       if (typeof it.question !== "string" || doc.text.slice(start, end) !== text) continue;
+      if (answerTooLong({ start, end })) { long++; continue; }
       answers[qkey(it.question)] = { question: it.question, start, end, text };
       n++;
     }
     persistAnswers();
     if (res) rerun();
-    if (n < data.items.length) throw new Error(`Loaded ${n} of ${data.items.length} answers; the rest didn't match this document.`);
+    const problems = [];
+    if (long) problems.push(wholePassageMsg(long));
+    const unmatched = data.items.length - n - long;
+    if (unmatched) problems.push(`${unmatched} didn't match this document.`);
+    if (problems.length) throw new Error(`Loaded ${n} of ${data.items.length} answers. ` + problems.join(" "));
   } catch (err) {
     $("setErr").textContent = err.message; $("setErr").classList.remove("hidden");
   }
@@ -656,6 +675,11 @@ $("runSetBtn").onclick = async () => {
     const body = await r.json();
     if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Couldn't run the set.");
     renderEval(body);
+    // The fixed size may have been lowered since these answers were marked.
+    const long = items.filter(answerTooLong).length;
+    if (long) {
+      showSetError(`${long} of these answers ${long === 1 ? "is" : "are"} longer than ${maxAnswerChars()} characters (half the current fixed size of ${doc.settings.size}), so Fixed can't be credited fairly for ${long === 1 ? "it" : "them"}. Re-mark ${long === 1 ? "it" : "them"} by selecting just the answer words, or use a larger fixed size.`);
+    }
   } catch (err) {
     $("setErr").textContent = err.message; $("setErr").classList.remove("hidden");
   } finally { $("runSetBtn").textContent = "Run saved set"; renderSet(); }
@@ -828,18 +852,29 @@ function verdict() {
   }
   // A #1 that is only a heading or fragment is described as exactly that.
   const frag = Object.fromEntries((res.top1_fragments || []).map((f) => [f.strategy, f]));
-  const pick = (g) => g.map((k) => top[k]).sort((x, y) => (y.end - y.start) - (x.end - x.start))[0];
-  const descs = groups.map((g) => describe(pick(g)));
-  const clash = new Set(descs).size < descs.length;  // same section, different text
-  const parts = groups.map((g, i) => {
-    const f = g.length === 1 && frag[g[0]];
-    if (f) {
-      const what = f.heading ? `the heading “${esc(f.heading)}”` : `a ${top[g[0]].end - top[g[0]].start}-character fragment, “${esc(f.text)}”`;
-      const where = f.inside.length ? `, which sits inside ${f.inside.map((k) => NAMES[k] + "'s").join(" and ")} #1 passage` : "";
-      return `${NAMES[g[0]]} only retrieved ${what}${where}`;
-    }
-    return `${list(g)} ${g.length > 1 ? "both pick" : "picks"} ${clash ? describe(pick(g), true) : descs[i]}`;
+  // Strategies that agree are merged into "both pick" only when their #1s sit
+  // in the same place; otherwise each one's own location is named.
+  const units = groups.flatMap((g) => {
+    const descs = g.map((k) => describe(top[k]));
+    return new Set(descs).size === 1 ? [{ ks: g, desc: descs[0] }] : g.map((k, i) => ({ ks: [k], desc: descs[i], linked: true }));
   });
+  const clash = new Set(units.map((u) => u.desc)).size < units.length;  // same section, different text
+  const parts = units.map((u) => {
+    const f = u.ks.length === 1 && !u.linked && frag[u.ks[0]];
+    if (f) {
+      const what = f.heading ? `the heading “${esc(f.heading)}”` : `a ${top[u.ks[0]].end - top[u.ks[0]].start}-character fragment, “${esc(f.text)}”`;
+      const where = f.inside.length ? `, which sits inside ${f.inside.map((k) => NAMES[k] + "'s").join(" and ")} #1 passage` : "";
+      return `${NAMES[u.ks[0]]} only retrieved ${what}${where}`;
+    }
+    const desc = clash ? describe(top[u.ks[0]], true) : u.desc;
+    return `${list(u.ks)} ${u.ks.length > 1 ? "both pick" : "picks"} ${desc}`;
+  });
+  // Members of one agreeing group read as one sentence: "Fixed picks …; Section picks …".
+  for (let i = parts.length - 1; i > 0; i--) {
+    if (units[i].linked && units[i - 1].linked && groups.some((g) => g.includes(units[i].ks[0]) && g.includes(units[i - 1].ks[0]))) {
+      parts.splice(i - 1, 2, parts[i - 1] + "; " + parts[i]);
+    }
+  }
   const middle = S.filter((k) => !groups.flat().includes(k));
   if (middle.length) parts.push(`${list(middle)} overlaps both`);
   return { cls: "disagree", head: "⚠ " + head, line: parts.join(". ") + "." };
